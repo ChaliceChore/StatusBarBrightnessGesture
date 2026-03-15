@@ -1,5 +1,5 @@
 [versions]
-agp = "8.13.2"
+agp = "9.1.0"
 # XposedBridge API — 82 is the stable release targeting Android 14/15/16
 xposed-api = "82"
 

@@ -1,6 +1,5 @@
 package dev.module.statusbarbrightnessgesture;
 
-import android.content.ContentResolver;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
@@ -8,7 +7,6 @@ import android.graphics.Typeface;
 import android.hardware.display.DisplayManager;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.Settings;
 import android.view.Display;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -27,30 +25,38 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
+/**
+ * LSPosed module — status bar brightness gesture.
+ *
+ * Hook targets (confirmed working from v1.0 git baseline):
+ *   PhoneStatusBarView.onTouchEvent        — shade CLOSED
+ *   NotificationShadeWindowView.dispatchTouchEvent — shade OPEN
+ *
+ * Brightness % formula (from DerpFest BrightnessController source):
+ *   The QS slider uses GAMMA_SPACE_MAX=65535 as its integer range.
+ *   convertLinearToGammaFloat(linear, min, max) maps a linear float to
+ *   an integer 0..GAMMA_SPACE_MAX in gamma space.
+ *   Slider % = sliderVal / GAMMA_SPACE_MAX * 100
+ *
+ *   We call convertLinearToGammaFloat via reflection on BrightnessUtils,
+ *   exactly as BrightnessController does. This gives us the same % the
+ *   QS slider shows.
+ */
 @SuppressWarnings({"JavaReflectionMemberAccess", "ConstantConditions"})
 public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     private static final String TAG = "BrightnessGestureHook";
     private static final String SYSTEMUI_PACKAGE = "com.android.systemui";
 
-    /**
-     * Hook targets — confirmed working from v1.0:
-     *
-     * PhoneStatusBarView.onTouchEvent — shade CLOSED
-     *   This method IS declared in DerpFest PhoneStatusBarView and receives
-     *   all touch events on the status bar when the shade is closed.
-     *   ev.getX() is in the view's local coordinates which span 0→screenWidth
-     *   since PhoneStatusBarView fills the full width of the screen.
-     *
-     * NotificationShadeWindowView.dispatchTouchEvent — shade OPEN
-     *   When QS/shade is open, touches go through this window instead.
-     *   Apply Y threshold to only handle touches in the status bar region.
-     *   ev.getX() here is also 0→screenWidth (the window is full-width).
-     */
     private static final String PHONE_STATUS_BAR_VIEW =
             "com.android.systemui.statusbar.phone.PhoneStatusBarView";
     private static final String SHADE_WINDOW_CLASS =
             "com.android.systemui.shade.NotificationShadeWindowView";
+
+    // BrightnessUtils constants — from BrightnessController source
+    private static final String BRIGHTNESS_UTILS_CLASS =
+            "com.android.settingslib.display.BrightnessUtils";
+    private static final int GAMMA_SPACE_MAX = 65535;
 
     private static final float STATUS_BAR_Y_FRACTION = 0.06f;
     private static final float HORIZONTAL_RATIO = 2.0f;
@@ -69,6 +75,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     private Context mContext;
     private DisplayManager mDisplayManager;
+    private WindowManager mWindowManager;
     private int mScreenWidth;
     private int mScreenHeight;
     private float mGestureSlopPx = 48f;
@@ -78,6 +85,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private Method mSetTemporaryBrightnessMethod;
     private Method mSetBrightnessMethod;
     private Method mGetBrightnessInfoMethod;
+    private Method mConvertLinearToGammaMethod;  // BrightnessUtils.convertLinearToGammaFloat
+
     private Field mBrightnessField;
     private Field mBrightnessMinField;
     private Field mBrightnessMaxField;
@@ -89,7 +98,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     // ── Indicator ─────────────────────────────────────────────────────────────
 
     private TextView mIndicatorView;
-    private WindowManager mWindowManager;
     private WindowManager.LayoutParams mIndicatorParams;
     private boolean mIndicatorAttached = false;
     private final Runnable mDismissIndicator = this::hideIndicator;
@@ -114,7 +122,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             return;
         }
 
-        // These two hooks are confirmed working in v1.0
         hookClass(PHONE_STATUS_BAR_VIEW, "onTouchEvent",
                 lpparam.classLoader, hookMethodFn, true);
         hookClass(SHADE_WINDOW_CLASS, "dispatchTouchEvent",
@@ -210,7 +217,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 byte[] buf = new byte[(int) f.length()];
                 fis.read(buf);
                 fis.close();
-                return new String(buf, "UTF-8");
+                return new String(buf, java.nio.charset.StandardCharsets.UTF_8);
             } catch (Throwable ignored) {}
         }
         return null;
@@ -248,6 +255,19 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
             mGetBrightnessInfoMethod = Display.class.getDeclaredMethod("getBrightnessInfo");
             mGetBrightnessInfoMethod.setAccessible(true);
+
+            // BrightnessUtils.convertLinearToGammaFloat(float val, float min, float max)
+            // Used by BrightnessController to convert linear brightness to QS slider position.
+            // We use the same method so our overlay % exactly matches the QS slider %.
+            try {
+                Class<?> brightnessUtils = Class.forName(
+                        BRIGHTNESS_UTILS_CLASS, false, context.getClassLoader());
+                mConvertLinearToGammaMethod = brightnessUtils.getMethod(
+                        "convertLinearToGammaFloat", float.class, float.class, float.class);
+                XposedBridge.log(TAG + ": found BrightnessUtils.convertLinearToGammaFloat");
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": BrightnessUtils not found, using fallback gamma: " + t);
+            }
 
             readBrightnessRange();
             initIndicator(context);
@@ -335,18 +355,14 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     /**
      * Shows the brightness % indicator.
      *
-     * The percentage displayed is read directly from
-     * "screen_brightness_float" — the exact same value
-     * that Settings → Display reads to show the brightness percentage.
-     * This guarantees our overlay always matches the system display.
+     * Uses BrightnessUtils.convertLinearToGammaFloat(linear, min, max) — the exact
+     * same method BrightnessController uses to position the QS slider.
+     * pct = convertLinearToGammaFloat(linear, min, max) / GAMMA_SPACE_MAX * 100
      *
-     * During a swipe, setTemporaryBrightness() updates the display hardware
-     * but does not write to Settings. We therefore read the ContentResolver
-     * for the last committed value as a fallback, and show the computed
-     * value (linear → gamma) for live feedback during the swipe.
+     * This guarantees the overlay % matches the QS slider position exactly.
      *
-     * @param fingerX  current finger X in view-local coordinates (0→screenWidth)
-     * @param linearBrightness  the linear brightness float we just applied
+     * @param fingerX          view-local X coordinate (0→screenWidth)
+     * @param linearBrightness the linear float we just sent to setTemporaryBrightness
      */
     private void showIndicator(float fingerX, float linearBrightness) {
         if (mIndicatorView == null || mWindowManager == null || mMainHandler == null) return;
@@ -354,34 +370,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
         mMainHandler.removeCallbacks(mDismissIndicator);
 
-        // Read the native brightness % from Settings — same source as Settings→Display.
-        // SCREEN_BRIGHTNESS_FLOAT stores the gamma-encoded value (0.0–1.0)
-        // that the Settings app multiplies by 100 to show the percentage.
-        // During the swipe setTemporaryBrightness hasn't written to Settings yet,
-        // so we compute the same gamma encoding ourselves for live feedback.
-        int pct;
-        try {
-            float stored = Settings.System.getFloat(
-                    mContext.getContentResolver(),
-                    "screen_brightness_float",
-                    -1f);
-            if (stored >= 0f) {
-                // Settings stores the gamma-encoded float directly
-                pct = Math.round(stored * 100f);
-            } else {
-                // Fallback: compute gamma-encoded value from the linear brightness
-                // Android uses gamma≈2.2 for the QS/Settings display mapping
-                float range = mBrightnessMax - mBrightnessMin;
-                float normalised = range > 0
-                        ? (linearBrightness - mBrightnessMin) / range
-                        : linearBrightness;
-                pct = Math.round((float) Math.pow(Math.max(0f, normalised), 1f / GAMMA) * 100f);
-            }
-        } catch (Throwable t) {
-            // Safe fallback: finger position %
-            pct = Math.round((fingerX / mScreenWidth) * 100f);
-        }
-        pct = Math.max(0, Math.min(100, pct));
+        int pct = linearToDisplayPct(linearBrightness);
 
         mIndicatorView.setText(pct + "%");
         mIndicatorView.measure(
@@ -409,6 +398,33 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": showIndicator failed: " + t);
         }
+    }
+
+    /**
+     * Converts a linear brightness float to the display percentage shown in QS/Settings.
+     *
+     * Mirrors BrightnessController.updateSlider():
+     *   final int sliderVal = convertLinearToGammaFloat(brightnessValue, min, max);
+     *   // sliderVal is in range [0, GAMMA_SPACE_MAX]
+     *   pct = sliderVal / GAMMA_SPACE_MAX * 100
+     */
+    private int linearToDisplayPct(float linear) {
+        try {
+            if (mConvertLinearToGammaMethod != null) {
+                int gammaVal = (int) mConvertLinearToGammaMethod.invoke(
+                        null, linear, mBrightnessMin, mBrightnessMax);
+                return Math.max(0, Math.min(100,
+                        Math.round((float) gammaVal / GAMMA_SPACE_MAX * 100f)));
+            }
+        } catch (Throwable ignored) {}
+
+        // Fallback: manual gamma conversion (same formula as BrightnessUtils internally)
+        float range = mBrightnessMax - mBrightnessMin;
+        if (range <= 0) return 0;
+        float normalised = (linear - mBrightnessMin) / range;
+        normalised = Math.max(0f, Math.min(1f, normalised));
+        float gamma = (float) Math.pow(normalised, 1.0 / GAMMA);
+        return Math.max(0, Math.min(100, Math.round(gamma * 100f)));
     }
 
     private void hideIndicator() {
@@ -439,13 +455,9 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private boolean onDown(MotionEvent ev, boolean isStatusBarView) {
         mGestureActive = false;
         mTouchStartedInStatusBar = false;
-
-        // isStatusBarView=true: PhoneStatusBarView — the view IS the bar, accept all Y
-        // isStatusBarView=false: NotificationShadeWindowView — apply Y threshold
         boolean inRegion = isStatusBarView
                 || (ev.getY() <= mScreenHeight * STATUS_BAR_Y_FRACTION);
         if (!inRegion) return false;
-
         mTouchStartedInStatusBar = true;
         mDownX = ev.getX();
         mDownY = ev.getY();
@@ -454,15 +466,12 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     private boolean onMove(MotionEvent ev) {
         if (!mTouchStartedInStatusBar) return false;
-
         float absDX = Math.abs(ev.getX() - mDownX);
         float absDY = Math.abs(ev.getY() - mDownY);
-
         if (!mGestureActive) {
             if (absDX <= mGestureSlopPx || absDX <= absDY * HORIZONTAL_RATIO) return false;
             mGestureActive = true;
         }
-
         float brightness = computeBrightness(ev.getX());
         setTemporaryBrightness(brightness);
         showIndicator(ev.getX(), brightness);

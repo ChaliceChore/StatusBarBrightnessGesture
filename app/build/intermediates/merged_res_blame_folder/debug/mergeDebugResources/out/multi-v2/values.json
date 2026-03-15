@@ -1,28 +1,6 @@
 {
     "logs": [
         {
-            "outputFile": "C:\\Users\\matthew\\.gradle\\daemon\\9.0.0\\dev.module.statusbarbrightnessgesture.app-mergeDebugResources-2:\\values\\values.xml",
-            "map": [
-                {
-                    "source": "C:\\Users\\matthew\\StudioProjects\\StatusBarBrightnessGesture\\app\\src\\main\\res\\values\\strings.xml",
-                    "from": {
-                        "startLines": "3,2,4",
-                        "startColumns": "4,4,4",
-                        "startOffsets": "122,55,231",
-                        "endColumns": "108,66,172",
-                        "endOffsets": "226,117,399"
-                    },
-                    "to": {
-                        "startLines": "2,3,4",
-                        "startColumns": "4,4,4",
-                        "startOffsets": "55,164,231",
-                        "endColumns": "108,66,172",
-                        "endOffsets": "159,226,399"
-                    }
-                }
-            ]
-        },
-        {
             "outputFile": "dev.module.statusbarbrightnessgesture.app-mergeDebugResources-2:/values/values.xml",
             "map": [
                 {
@@ -45,9 +23,11 @@
                 {
                     "source": "C:\\Users\\matthew\\StudioProjects\\StatusBarBrightnessGesture\\app\\src\\main\\res\\values\\strings.xml",
                     "from": {
-                        "startLines": "-1,-1,-1",
-                        "startColumns": "-1,-1,-1",
-                        "startOffsets": "-1,-1,-1"
+                        "startLines": "3,2,4",
+                        "startColumns": "4,4,4",
+                        "startOffsets": "122,55,231",
+                        "endColumns": "108,66,172",
+                        "endOffsets": "226,117,399"
                     },
                     "to": {
                         "startLines": "3,4,5",
