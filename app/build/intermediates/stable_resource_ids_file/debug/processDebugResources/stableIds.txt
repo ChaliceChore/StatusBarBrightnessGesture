@@ -1,0 +1,3 @@
+dev.module.statusbarbrightnessgesture:string/module_description = 0x7f010002
+dev.module.statusbarbrightnessgesture:string/app_name = 0x7f010001
+dev.module.statusbarbrightnessgesture:string/app_description = 0x7f010000
