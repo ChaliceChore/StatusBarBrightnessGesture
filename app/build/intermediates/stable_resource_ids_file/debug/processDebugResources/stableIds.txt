@@ -1,3 +1,5 @@
-dev.module.statusbarbrightnessgesture:string/module_description = 0x7f010002
-dev.module.statusbarbrightnessgesture:string/app_name = 0x7f010001
-dev.module.statusbarbrightnessgesture:string/app_description = 0x7f010000
+dev.module.statusbarbrightnessgesture:string/app_description = 0x7f030000
+dev.module.statusbarbrightnessgesture:drawable/ic_launcher_foreground = 0x7f020000
+dev.module.statusbarbrightnessgesture:string/module_description = 0x7f030002
+dev.module.statusbarbrightnessgesture:string/app_name = 0x7f030001
+dev.module.statusbarbrightnessgesture:color/ic_launcher_background = 0x7f010000

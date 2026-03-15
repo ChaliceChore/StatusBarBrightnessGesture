@@ -8,43 +8,70 @@
 8        android:minSdkVersion="33"
 9        android:targetSdkVersion="36" />
 10
-11    <application
-11-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:4:5-26:19
-12        android:allowBackup="false"
-12-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:5:9-36
-13        android:debuggable="true"
-14        android:description="@string/app_description"
-14-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:7:9-54
-15        android:extractNativeLibs="false"
-16        android:label="@string/app_name"
-16-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:6:9-41
-17        android:supportsRtl="true"
-17-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:8:9-35
-18        android:testOnly="true" >
-19        <meta-data
-19-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:10:9-12:36
-20            android:name="xposedmodule"
-20-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:11:13-40
-21            android:value="true" />
-21-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:12:13-33
-22        <meta-data
-22-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:14:9-16:58
-23            android:name="xposeddescription"
-23-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:15:13-45
-24            android:value="@string/module_description" />
-24-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:16:13-55
-25        <meta-data
-25-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:18:9-20:34
-26            android:name="xposedminversion"
-26-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:19:13-44
-27            android:value="82" />
-27-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:20:13-31
-28        <meta-data
-28-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:22:9-24:52
-29            android:name="xposedscope"
-29-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:23:13-39
-30            android:value="com.android.systemui" />
-30-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:24:13-49
-31    </application>
-32
-33</manifest>
+11    <!-- Required for TYPE_APPLICATION_OVERLAY used by the brightness % indicator -->
+12    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+12-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:5:5-78
+12-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:5:22-75
+13
+14    <application
+14-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:7:5-29:19
+15        android:allowBackup="false"
+15-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:8:9-36
+16        android:debuggable="true"
+17        android:description="@string/app_description"
+17-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:10:9-54
+18        android:extractNativeLibs="false"
+19        android:icon="@drawable/ic_launcher_foreground"
+19-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:12:9-56
+20        android:label="@string/app_name"
+20-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:9:9-41
+21        android:supportsRtl="true"
+21-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:11:9-35
+22        android:testOnly="true" >
+23        <meta-data
+23-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:14:9-78
+24            android:name="xposedmodule"
+24-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:14:20-47
+25            android:value="true" />
+25-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:14:55-75
+26        <meta-data
+26-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:15:9-100
+27            android:name="xposeddescription"
+27-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:15:20-52
+28            android:value="@string/module_description" />
+28-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:15:55-97
+29        <meta-data
+29-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:16:9-76
+30            android:name="xposedminversion"
+30-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:16:20-51
+31            android:value="82" />
+31-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:16:55-73
+32        <meta-data
+32-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:17:9-94
+33            android:name="xposedscope"
+33-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:17:20-46
+34            android:value="com.android.systemui" />
+34-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:17:55-91
+35
+36        <activity
+36-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:19:9-27:20
+37            android:name="dev.module.statusbarbrightnessgesture.SettingsActivity"
+37-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:20:13-45
+38            android:exported="true"
+38-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:22:13-36
+39            android:label="@string/app_name" >
+39-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:21:13-45
+40            <intent-filter>
+40-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:23:13-26:29
+41                <action android:name="android.intent.action.MAIN" />
+41-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:24:17-69
+41-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:24:25-66
+42
+43                <category android:name="android.intent.category.LAUNCHER" />
+43-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:25:17-77
+43-->C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\AndroidManifest.xml:25:27-74
+44            </intent-filter>
+45        </activity>
+46    </application>
+47
+48</manifest>
