@@ -5,3 +5,4 @@ drawable ic_launcher_foreground
 string app_description
 string app_name
 string module_description
+style Theme.StatusBarBrightnessGesture

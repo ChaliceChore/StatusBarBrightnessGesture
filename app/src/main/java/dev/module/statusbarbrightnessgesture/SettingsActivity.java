@@ -3,9 +3,12 @@ package dev.module.statusbarbrightnessgesture;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.CompoundButton;
@@ -18,45 +21,70 @@ import android.widget.TextView;
 public class SettingsActivity extends Activity {
 
     private SharedPreferences mPrefs;
+    private int colText;
+    private int colTextSecondary;
+    private int colSurface;
+    private int colBackground;
+    private int colDivider;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // Apply Material You dynamic colours before super.onCreate sets the theme
+        try {
+            Class<?> dc = Class.forName("com.google.android.material.color.DynamicColors");
+            dc.getMethod("applyToActivityIfAvailable", Activity.class).invoke(null, this);
+        } catch (Throwable ignored) {}
+
         super.onCreate(savedInstanceState);
-        mPrefs = getSharedPreferences(Prefs.KEY_GESTURE_ENABLED + "_prefs", MODE_PRIVATE);
+        resolveColours();
+
+        mPrefs = getSharedPreferences("brightness_gesture_prefs", MODE_PRIVATE);
 
         float dp = getResources().getDisplayMetrics().density;
         int hPad = (int)(24*dp), vPad = (int)(20*dp);
 
         ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(Color.parseColor("#F2F2F2"));
+        scroll.setBackgroundColor(colBackground);
         setContentView(scroll);
+
+        // Push content below the status bar using window insets
+        scroll.setOnApplyWindowInsetsListener((v, insets) -> {
+            v.setPadding(
+                    v.getPaddingLeft(),
+                    insets.getSystemWindowInsetTop(),
+                    v.getPaddingRight(),
+                    insets.getSystemWindowInsetBottom());
+            return insets;
+        });
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(root);
 
+        // ── Header ────────────────────────────────────────────────────────────
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.VERTICAL);
-        header.setBackgroundColor(Color.WHITE);
+        header.setBackgroundColor(colSurface);
         header.setPadding(hPad, vPad, hPad, vPad);
 
         TextView title = new TextView(this);
         title.setText("Status Bar Brightness");
         title.setTextSize(22);
         title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setTextColor(Color.parseColor("#1A1A1A"));
+        title.setTextColor(colText);
         header.addView(title);
 
         TextView subtitle = new TextView(this);
         subtitle.setText("Swipe horizontally on the status bar to adjust brightness");
         subtitle.setTextSize(14);
-        subtitle.setTextColor(Color.parseColor("#666666"));
+        subtitle.setTextColor(colTextSecondary);
         subtitle.setPadding(0, (int)(6*dp), 0, 0);
         header.addView(subtitle);
 
         root.addView(header, matchWidth());
         root.addView(divider(dp), matchWidth());
 
+        // ── Toggles ───────────────────────────────────────────────────────────
         buildToggleRow(root, "Enable gesture",
                 "Swipe left to dim, right to brighten",
                 Prefs.KEY_GESTURE_ENABLED, true, dp, hPad, vPad);
@@ -67,16 +95,17 @@ public class SettingsActivity extends Activity {
                 Prefs.KEY_OVERLAY_ENABLED, true, dp, hPad, vPad);
         root.addView(divider(dp), matchWidth());
 
+        // ── How to use ────────────────────────────────────────────────────────
         LinearLayout hint = new LinearLayout(this);
         hint.setOrientation(LinearLayout.VERTICAL);
-        hint.setBackgroundColor(Color.WHITE);
+        hint.setBackgroundColor(colSurface);
         hint.setPadding(hPad, vPad, hPad, vPad);
 
         TextView hintTitle = new TextView(this);
         hintTitle.setText("How to use");
         hintTitle.setTextSize(14);
         hintTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        hintTitle.setTextColor(Color.parseColor("#1A1A1A"));
+        hintTitle.setTextColor(colText);
         hint.addView(hintTitle);
 
         for (String tip : new String[]{
@@ -89,7 +118,7 @@ public class SettingsActivity extends Activity {
             TextView t = new TextView(this);
             t.setText(tip);
             t.setTextSize(13);
-            t.setTextColor(Color.parseColor("#555555"));
+            t.setTextColor(colTextSecondary);
             t.setPadding(0, (int)(5*dp), 0, 0);
             hint.addView(t);
         }
@@ -98,10 +127,67 @@ public class SettingsActivity extends Activity {
         TextView note = new TextView(this);
         note.setText("Changes take effect immediately — no reboot needed.");
         note.setTextSize(12);
-        note.setTextColor(Color.parseColor("#999999"));
+        note.setTextColor(colTextSecondary);
         note.setGravity(Gravity.CENTER);
         note.setPadding(hPad, (int)(16*dp), hPad, (int)(16*dp));
         root.addView(note, matchWidth());
+    }
+
+    private void resolveColours() {
+        boolean night = (getResources().getConfiguration().uiMode
+                & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+
+        TypedValue tv = new TypedValue();
+
+        // colorBackground
+        if (getTheme().resolveAttribute(android.R.attr.colorBackground, tv, true)
+                && tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
+                && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
+            colBackground = tv.data;
+        } else {
+            colBackground = night ? 0xFF1C1B1F : 0xFFFFFBFE;
+        }
+
+        // colorSurface — try Material3 attr name
+        int surfaceAttr = getResources().getIdentifier(
+                "colorSurface", "attr", getPackageName());
+        if (surfaceAttr == 0) {
+            // Fall back to window background which Material3 sets correctly
+            if (getTheme().resolveAttribute(android.R.attr.windowBackground, tv, true)
+                    && tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
+                    && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
+                colSurface = tv.data;
+            } else {
+                colSurface = colBackground;
+            }
+        } else {
+            if (getTheme().resolveAttribute(surfaceAttr, tv, true)) {
+                colSurface = tv.data;
+            } else {
+                colSurface = colBackground;
+            }
+        }
+
+        // textColorPrimary
+        if (getTheme().resolveAttribute(android.R.attr.textColorPrimary, tv, true)
+                && tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
+                && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
+            colText = tv.data;
+        } else {
+            colText = night ? 0xFFE6E1E5 : 0xFF1C1B1F;
+        }
+
+        // textColorSecondary
+        if (getTheme().resolveAttribute(android.R.attr.textColorSecondary, tv, true)
+                && tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
+                && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
+            colTextSecondary = tv.data;
+        } else {
+            colTextSecondary = night ? 0xFFCAC4D0 : 0xFF49454F;
+        }
+
+        // divider — subtle outline
+        colDivider = night ? 0x1FFFFFFF : 0x1F000000;
     }
 
     private void buildToggleRow(LinearLayout root, String titleText, String descText,
@@ -109,7 +195,7 @@ public class SettingsActivity extends Activity {
                                 float dp, int hPad, int vPad) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setBackgroundColor(Color.WHITE);
+        row.setBackgroundColor(colSurface);
         row.setPadding(hPad, vPad, hPad, vPad);
         row.setGravity(Gravity.CENTER_VERTICAL);
 
@@ -121,13 +207,13 @@ public class SettingsActivity extends Activity {
         TextView tv = new TextView(this);
         tv.setText(titleText);
         tv.setTextSize(16);
-        tv.setTextColor(Color.parseColor("#1A1A1A"));
+        tv.setTextColor(colText);
         textCol.addView(tv);
 
         TextView dv = new TextView(this);
         dv.setText(descText);
         dv.setTextSize(13);
-        dv.setTextColor(Color.parseColor("#888888"));
+        dv.setTextColor(colTextSecondary);
         dv.setPadding(0, (int)(3*dp), 0, 0);
         textCol.addView(dv);
 
@@ -158,12 +244,12 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        sendPrefs(); // re-sync on every resume in case SystemUI restarted
+        sendPrefs();
     }
 
     private View divider(float dp) {
         View v = new View(this);
-        v.setBackgroundColor(Color.parseColor("#E0E0E0"));
+        v.setBackgroundColor(colDivider);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, (int)(1*dp));
         lp.setMarginStart((int)(24*dp));

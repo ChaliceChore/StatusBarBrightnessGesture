@@ -8,8 +8,8 @@ android {
         applicationId = "dev.module.statusbarbrightnessgesture"
         minSdk = 33
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.4.0"
+        versionCode = 6
+        versionName = "1.5.0"
     }
     buildTypes {
         release {
@@ -27,4 +27,5 @@ android {
 }
 dependencies {
     compileOnly(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
+    implementation("com.google.android.material:material:1.12.0")
 }
