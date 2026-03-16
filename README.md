@@ -1,117 +1,114 @@
-# Status Bar Brightness Gesture — LSPosed Module
+# Status Bar Brightness Gesture
 
-Swipe horizontally across the **status bar** to adjust screen brightness in real time.
-Replicates the crDroid feature on any AOSP-derived ROM (tested target: DerpFest 16.2 on Pixel 6 / Oriole).
+An LSPosed module that lets you swipe horizontally on the status bar to control screen brightness — works with the notification shade open or closed, and on the lockscreen.
 
----
+## Requirements
 
-## How it works
-
-| Gesture | Result |
-|---|---|
-| Swipe right across status bar | Increase brightness |
-| Swipe left across status bar | Decrease brightness |
-| Release finger | Commit brightness to system |
-
-The gesture mirrors the exact call sequence used by the Quick Settings brightness slider:
-- `DisplayManager.setTemporaryBrightness()` for live updates while swiping
-- `DisplayManager.setBrightness()` to commit on finger lift
-
-A gamma correction (γ ≈ 2.2) is applied so the gesture feels perceptually linear, matching
-the curve used by the QS slider internally.
-
----
-
-## Prerequisites
-
-- **Rooted device** with [Magisk](https://github.com/topjohnwu/Magisk)
-- **LSPosed** installed (Zygisk edition recommended)
-  - [LSPosed GitHub](https://github.com/LSPosed/LSPosed)
-- **Android Studio** (Hedgehog or newer) for building
-- **JDK 17** (bundled with Android Studio)
-
----
-
-## Building
-
-1. Clone or extract this project
-2. Open the root folder in Android Studio
-3. Wait for Gradle sync to complete
-4. **Build → Generate Signed Bundle / APK → APK → debug** (for testing)
-   - Or run via the green ▶ button with a connected device/emulator
-5. The APK will be at:
-   ```
-   app/build/outputs/apk/debug/app-debug.apk
-   ```
-
-> **Note:** The `xposed-api` dependency is `compileOnly` — it is used for compilation only
-> and is NOT packaged in the APK. LSPosed injects its own XposedBridge at runtime.
-
----
+- Android 12 or higher
+- [Magisk](https://github.com/topjohnwu/Magisk) (rooted device)
+- [LSPosed](https://github.com/LSPosed/LSPosed) (Zygisk edition recommended)
 
 ## Installation
 
-```bash
-# Install the APK (module must be installed as a regular app first)
-adb install app/build/outputs/apk/debug/app-debug.apk
+1. Install the APK from the [Releases](../../releases) page
+2. Open LSPosed → Modules → enable **Status Bar Brightness Gesture**
+3. Set the scope to **System UI**
+4. Reboot
+5. Open the app and configure your preferences
+
+### One-time ADB setup (required for toggle persistence across reboots)
+
+Connect your device via ADB and run:
 ```
+adb shell pm grant dev.module.statusbarbrightnessgesture android.permission.WRITE_SECURE_SETTINGS
+```
+This only needs to be run once after a fresh install. It survives reboots and app updates.
 
-Then in the **LSPosed Manager** app:
-1. Open **Modules**
-2. Find **Status Bar Brightness Gesture**
-3. Enable it
-4. Set the scope to **System UI** (`com.android.systemui`)
-5. Reboot (or soft-reboot SystemUI via LSPosed Manager if available)
+## Usage
 
----
+- **Swipe right** on the status bar to increase brightness
+- **Swipe left** on the status bar to decrease brightness
+- Works with the notification shade open or closed
+- Works on the lockscreen
+- The brightness indicator follows your wallpaper accent colour
 
-## Gesture details
+## Settings
 
-- The gesture only fires if the touch **starts within the top ~6% of the screen** (status bar region)
-- A touch is only recognised as a brightness gesture if it moves **horizontally more than 2× its vertical movement** — this prevents conflicts with shade-pull gestures
-- A minimum movement threshold (based on `ViewConfiguration.scaledTouchSlop`) prevents accidental triggering on taps
-- The gesture is **additive**: swiping from the current brightness level, not always from 0
-
----
+Open the app to configure:
+- **Enable gesture** — turn the swipe gesture on or off
+- **Show brightness indicator** — show or hide the brightness % overlay while swiping
 
 ## Compatibility
 
-| Android version | Status |
-|---|---|
-| Android 13 (API 33) | ✅ Supported |
-| Android 14 (API 34) | ✅ Supported |
-| Android 15 (API 35) | ✅ Supported |
-| Android 16 (API 36) | ✅ Supported (primary target) |
+Works on most AOSP-based Android 12+ ROMs including:
+- Pixel stock (GrapheneOS, CalyxOS)
+- LineageOS and derivatives (crDroid, EvolutionX, DerpFest, etc.)
 
-Hook target `NotificationShadeWindowView.dispatchTouchEvent()` is present and stable
-in AOSP since Android 11. Both crDroid and DerpFest source trees were verified.
+May not work on heavily customised ROMs such as Samsung OneUI or Xiaomi HyperOS, as these replace the standard status bar classes.
 
----
+## Tested on
 
-## Troubleshooting
+- Pixel 6 (Oriole), DerpFest 16.2, Android 16, LSPosed v1.11.0
 
-**Gesture does nothing:**
-- Confirm LSPosed scope includes `com.android.systemui`
-- Check LSPosed logs for `BrightnessGestureHook` tag
-- Run `adb logcat -s BrightnessGestureHook` while swiping and check for error messages
+## License
 
-**Shade opens instead of brightness changing:**
-- The gesture detection threshold may need tuning for your swipe speed. The horizontal-to-vertical
-  ratio check (`HORIZONTAL_DIRECTION_RATIO = 2.0`) can be lowered in `BrightnessGestureHook.java`
-  if needed
-
-**Brightness jumps instead of feeling smooth:**
-- Verify `getCurrentBrightness()` is returning a valid value at gesture start (check logcat)
-- The `GAMMA` constant (2.2) can be adjusted for a different feel
+MIT
+```
 
 ---
 
-## Architecture notes
+## Step 5 — Initialize Git and make your first commit
 
-- **Hook point:** `NotificationShadeWindowView.dispatchTouchEvent(MotionEvent)`
-  - Chosen over `ShadeViewController.handleExternalTouch()` for stability across ROM variants
-- **Brightness APIs:** Both `setTemporaryBrightness` and `setBrightness` are `@hide` methods
-  accessed via reflection. They are called on the main thread (temporary) and a background
-  thread via `AsyncTask.execute()` (commit), matching SystemUI's own pattern exactly.
-- **No Settings write during swipe:** `setTemporaryBrightness` bypasses Settings, ensuring
-  smooth updates without triggering ContentObserver callbacks that could cause feedback loops.
+Open a command prompt in your project root:
+```
+cd C:\Users\matthew\AndroidStudioProjects\StatusBarBrightnessGesture
+
+git init
+git add .
+git commit -m "v1.6.0 - toggle persistence, Material You UI, broadcast prefs"
+git branch -M main
+git remote add origin https://github.com/yourusername/StatusBarBrightnessGesture.git
+git push -u origin main
+```
+
+---
+
+## Step 6 — Add each version as a GitHub Release
+
+You can't recreate the git history for v1.0.0 through v1.5.0 unless you still have those APKs. Check your Android Studio build outputs folder — you may still have some of the old debug APKs at:
+```
+C:\Users\matthew\AndroidStudioProjects\StatusBarBrightnessGesture\app\build\outputs\apk\debug\
+```
+
+For each APK you still have, create a release on GitHub:
+
+1. Go to your repository → **Releases** → **Draft a new release**
+2. Click **Choose a tag** → type the version (e.g. `v1.0.0`) → **Create new tag**
+3. Set the **Release title** to match, e.g. `v1.0.0`
+4. Add release notes (see below)
+5. Attach the APK file
+6. Click **Publish release**
+
+**Release notes by version:**
+
+| Version | Notes |
+|---------|-------|
+| v1.0.0 | Initial release — horizontal swipe gesture on status bar |
+| v1.1.0 | Brightness range matched to QS slider |
+| v1.2.0 | Brightness % overlay indicator added |
+| v1.3.0 | Gesture works with shade open and closed, lockscreen support |
+| v1.4.0 | Toggle persistence via broadcast receiver — gesture and overlay toggles work immediately |
+| v1.5.0 | Material You dynamic colours, dark/light mode support, status bar inset fix |
+| v1.6.0 | Toggle state persists across reboots via Settings.Secure — no app open required after boot |
+
+For versions where you no longer have the APK, you can still create the release tag without attaching a file — it documents the history even without the binary.
+
+---
+
+## Step 7 — Future workflow
+
+Every time you reach a new restore point going forward:
+```
+git add .
+git commit -m "v1.7.0 - description of what changed"
+git push
