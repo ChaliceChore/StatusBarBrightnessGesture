@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.provider.Settings;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Typeface;
@@ -172,6 +173,23 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         if (mReceiverRegistered) return;
         mReceiverRegistered = true;
 
+        // Read persisted state from Settings.Secure on boot — available immediately,
+        // no app process needed, survives reboots.
+        // Falls back to true (enabled) if the key doesn't exist yet.
+        try {
+            mGestureEnabled = Settings.Secure.getInt(context.getContentResolver(),
+                    Prefs.KEY_GESTURE_ENABLED, Prefs.DEFAULT_GESTURE_ENABLED) == 1;
+            mOverlayEnabled = Settings.Secure.getInt(context.getContentResolver(),
+                    Prefs.KEY_OVERLAY_ENABLED, Prefs.DEFAULT_OVERLAY_ENABLED) == 1;
+            XposedBridge.log(TAG + ": boot state from Settings.Secure — gesture="
+                    + mGestureEnabled + " overlay=" + mOverlayEnabled);
+        } catch (Throwable t) {
+            mGestureEnabled = true;
+            mOverlayEnabled  = true;
+            XposedBridge.log(TAG + ": Settings.Secure read failed, defaulting to true: " + t);
+        }
+
+        // Broadcast receiver for live updates when user changes a toggle
         BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context ctx, Intent intent) {
@@ -179,7 +197,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 boolean prevGesture = mGestureEnabled;
                 mGestureEnabled = intent.getBooleanExtra(Prefs.KEY_GESTURE_ENABLED, true);
                 mOverlayEnabled  = intent.getBooleanExtra(Prefs.KEY_OVERLAY_ENABLED,  true);
-                XposedBridge.log(TAG + ": prefs updated — gesture="
+                XposedBridge.log(TAG + ": prefs updated via broadcast — gesture="
                         + mGestureEnabled + " overlay=" + mOverlayEnabled);
                 if (prevGesture && !mGestureEnabled && mIndicatorAttached) {
                     hideIndicator();

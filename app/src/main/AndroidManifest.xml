@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:allowBackup="false"
@@ -11,10 +16,10 @@
         android:icon="@drawable/ic_launcher_foreground"
         android:theme="@style/Theme.StatusBarBrightnessGesture">
 
-        <meta-data android:name="xposedmodule"        android:value="true" />
-        <meta-data android:name="xposeddescription"   android:value="@string/module_description" />
-        <meta-data android:name="xposedminversion"    android:value="82" />
-        <meta-data android:name="xposedscope"         android:value="com.android.systemui" />
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data android:name="xposeddescription" android:value="@string/module_description" />
+        <meta-data android:name="xposedminversion" android:value="82" />
+        <meta-data android:name="xposedscope" android:value="com.android.systemui" />
 
         <activity
             android:name=".SettingsActivity"

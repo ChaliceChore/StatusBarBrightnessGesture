@@ -2,12 +2,10 @@ package dev.module.statusbarbrightnessgesture;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.content.SharedPreferences;
-import android.content.res.ColorStateList;
 import android.content.res.Configuration;
-import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -17,10 +15,21 @@ import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 
+/**
+ * Settings UI.
+ *
+ * Writes toggle state to Settings.Secure — always available from boot,
+ * readable by any process including SystemUI, persists across reboots.
+ *
+ * Requires WRITE_SECURE_SETTINGS — declared in manifest, granted once via ADB:
+ *   adb shell pm grant dev.module.statusbarbrightnessgesture android.permission.WRITE_SECURE_SETTINGS
+ *
+ * Also sends a broadcast on every change and resume so the hook updates
+ * immediately without needing to read Settings.Secure again.
+ */
 @SuppressWarnings("deprecation")
 public class SettingsActivity extends Activity {
 
-    private SharedPreferences mPrefs;
     private int colText;
     private int colTextSecondary;
     private int colSurface;
@@ -29,7 +38,6 @@ public class SettingsActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        // Apply Material You dynamic colours before super.onCreate sets the theme
         try {
             Class<?> dc = Class.forName("com.google.android.material.color.DynamicColors");
             dc.getMethod("applyToActivityIfAvailable", Activity.class).invoke(null, this);
@@ -38,8 +46,6 @@ public class SettingsActivity extends Activity {
         super.onCreate(savedInstanceState);
         resolveColours();
 
-        mPrefs = getSharedPreferences("brightness_gesture_prefs", MODE_PRIVATE);
-
         float dp = getResources().getDisplayMetrics().density;
         int hPad = (int)(24*dp), vPad = (int)(20*dp);
 
@@ -47,13 +53,9 @@ public class SettingsActivity extends Activity {
         scroll.setBackgroundColor(colBackground);
         setContentView(scroll);
 
-        // Push content below the status bar using window insets
         scroll.setOnApplyWindowInsetsListener((v, insets) -> {
-            v.setPadding(
-                    v.getPaddingLeft(),
-                    insets.getSystemWindowInsetTop(),
-                    v.getPaddingRight(),
-                    insets.getSystemWindowInsetBottom());
+            v.setPadding(v.getPaddingLeft(), insets.getSystemWindowInsetTop(),
+                    v.getPaddingRight(), insets.getSystemWindowInsetBottom());
             return insets;
         });
 
@@ -87,12 +89,14 @@ public class SettingsActivity extends Activity {
         // ── Toggles ───────────────────────────────────────────────────────────
         buildToggleRow(root, "Enable gesture",
                 "Swipe left to dim, right to brighten",
-                Prefs.KEY_GESTURE_ENABLED, true, dp, hPad, vPad);
+                Prefs.KEY_GESTURE_ENABLED, Prefs.DEFAULT_GESTURE_ENABLED,
+                dp, hPad, vPad);
         root.addView(divider(dp), matchWidth());
 
         buildToggleRow(root, "Show brightness indicator",
                 "Displays brightness % while swiping",
-                Prefs.KEY_OVERLAY_ENABLED, true, dp, hPad, vPad);
+                Prefs.KEY_OVERLAY_ENABLED, Prefs.DEFAULT_OVERLAY_ENABLED,
+                dp, hPad, vPad);
         root.addView(divider(dp), matchWidth());
 
         // ── How to use ────────────────────────────────────────────────────────
@@ -133,65 +137,8 @@ public class SettingsActivity extends Activity {
         root.addView(note, matchWidth());
     }
 
-    private void resolveColours() {
-        boolean night = (getResources().getConfiguration().uiMode
-                & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
-
-        TypedValue tv = new TypedValue();
-
-        // colorBackground
-        if (getTheme().resolveAttribute(android.R.attr.colorBackground, tv, true)
-                && tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
-                && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
-            colBackground = tv.data;
-        } else {
-            colBackground = night ? 0xFF1C1B1F : 0xFFFFFBFE;
-        }
-
-        // colorSurface — try Material3 attr name
-        int surfaceAttr = getResources().getIdentifier(
-                "colorSurface", "attr", getPackageName());
-        if (surfaceAttr == 0) {
-            // Fall back to window background which Material3 sets correctly
-            if (getTheme().resolveAttribute(android.R.attr.windowBackground, tv, true)
-                    && tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
-                    && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
-                colSurface = tv.data;
-            } else {
-                colSurface = colBackground;
-            }
-        } else {
-            if (getTheme().resolveAttribute(surfaceAttr, tv, true)) {
-                colSurface = tv.data;
-            } else {
-                colSurface = colBackground;
-            }
-        }
-
-        // textColorPrimary
-        if (getTheme().resolveAttribute(android.R.attr.textColorPrimary, tv, true)
-                && tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
-                && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
-            colText = tv.data;
-        } else {
-            colText = night ? 0xFFE6E1E5 : 0xFF1C1B1F;
-        }
-
-        // textColorSecondary
-        if (getTheme().resolveAttribute(android.R.attr.textColorSecondary, tv, true)
-                && tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
-                && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
-            colTextSecondary = tv.data;
-        } else {
-            colTextSecondary = night ? 0xFFCAC4D0 : 0xFF49454F;
-        }
-
-        // divider — subtle outline
-        colDivider = night ? 0x1FFFFFFF : 0x1F000000;
-    }
-
     private void buildToggleRow(LinearLayout root, String titleText, String descText,
-                                String prefKey, boolean defaultVal,
+                                String prefKey, int defaultVal,
                                 float dp, int hPad, int vPad) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -220,9 +167,16 @@ public class SettingsActivity extends Activity {
         row.addView(textCol);
 
         Switch sw = new Switch(this);
-        sw.setChecked(mPrefs.getBoolean(prefKey, defaultVal));
+        int current = Settings.Secure.getInt(getContentResolver(), prefKey, defaultVal);
+        sw.setChecked(current == 1);
         sw.setOnCheckedChangeListener((CompoundButton b, boolean checked) -> {
-            mPrefs.edit().putBoolean(prefKey, checked).apply();
+            try {
+                Settings.Secure.putInt(getContentResolver(), prefKey, checked ? 1 : 0);
+            } catch (SecurityException e) {
+                // Permission not yet granted — toggle still works via broadcast
+                // Run: adb shell pm grant dev.module.statusbarbrightnessgesture
+                //          android.permission.WRITE_SECURE_SETTINGS
+            }
             sendPrefs();
         });
         row.addView(sw);
@@ -235,9 +189,11 @@ public class SettingsActivity extends Activity {
         Intent intent = new Intent(Prefs.ACTION_PREFS_CHANGED);
         intent.setPackage("com.android.systemui");
         intent.putExtra(Prefs.KEY_GESTURE_ENABLED,
-                mPrefs.getBoolean(Prefs.KEY_GESTURE_ENABLED, true));
+                Settings.Secure.getInt(getContentResolver(),
+                        Prefs.KEY_GESTURE_ENABLED, Prefs.DEFAULT_GESTURE_ENABLED) == 1);
         intent.putExtra(Prefs.KEY_OVERLAY_ENABLED,
-                mPrefs.getBoolean(Prefs.KEY_OVERLAY_ENABLED, true));
+                Settings.Secure.getInt(getContentResolver(),
+                        Prefs.KEY_OVERLAY_ENABLED, Prefs.DEFAULT_OVERLAY_ENABLED) == 1);
         sendBroadcast(intent);
     }
 
@@ -245,6 +201,46 @@ public class SettingsActivity extends Activity {
     protected void onResume() {
         super.onResume();
         sendPrefs();
+    }
+
+    private void resolveColours() {
+        boolean night = (getResources().getConfiguration().uiMode
+                & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        TypedValue tv = new TypedValue();
+
+        if (getTheme().resolveAttribute(android.R.attr.colorBackground, tv, true)
+                && tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
+                && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
+            colBackground = tv.data;
+        } else {
+            colBackground = night ? 0xFF1C1B1F : 0xFFFFFBFE;
+        }
+
+        if (getTheme().resolveAttribute(android.R.attr.windowBackground, tv, true)
+                && tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
+                && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
+            colSurface = tv.data;
+        } else {
+            colSurface = colBackground;
+        }
+
+        if (getTheme().resolveAttribute(android.R.attr.textColorPrimary, tv, true)
+                && tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
+                && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
+            colText = tv.data;
+        } else {
+            colText = night ? 0xFFE6E1E5 : 0xFF1C1B1F;
+        }
+
+        if (getTheme().resolveAttribute(android.R.attr.textColorSecondary, tv, true)
+                && tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
+                && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
+            colTextSecondary = tv.data;
+        } else {
+            colTextSecondary = night ? 0xFFCAC4D0 : 0xFF49454F;
+        }
+
+        colDivider = night ? 0x1FFFFFFF : 0x1F000000;
     }
 
     private View divider(float dp) {

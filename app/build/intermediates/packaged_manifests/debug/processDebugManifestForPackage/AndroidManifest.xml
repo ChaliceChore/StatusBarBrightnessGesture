@@ -9,6 +9,7 @@
         android:targetSdkVersion="35" />
 
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
 
     <permission
         android:name="dev.module.statusbarbrightnessgesture.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
