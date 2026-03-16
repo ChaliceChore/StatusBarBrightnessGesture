@@ -4,7 +4,7 @@
             "outputFile": "dev.module.statusbarbrightnessgesture.app-mergeDebugResources-2:/values/values.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\matthew\\StudioProjects\\StatusBarBrightnessGesture\\app\\src\\main\\res\\values\\colors.xml",
+                    "source": "C:\\Users\\matthew\\AndroidStudioProjects\\StatusBarBrightnessGesture\\app\\src\\main\\res\\values\\colors.xml",
                     "from": {
                         "startLines": "3",
                         "startColumns": "4",
@@ -21,7 +21,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\matthew\\StudioProjects\\StatusBarBrightnessGesture\\app\\src\\main\\res\\values\\strings.xml",
+                    "source": "C:\\Users\\matthew\\AndroidStudioProjects\\StatusBarBrightnessGesture\\app\\src\\main\\res\\values\\strings.xml",
                     "from": {
                         "startLines": "3,2,4",
                         "startColumns": "4,4,4",

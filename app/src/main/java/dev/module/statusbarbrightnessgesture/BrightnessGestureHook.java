@@ -1,10 +1,14 @@
 package dev.module.statusbarbrightnessgesture;
 
+import android.database.ContentObserver;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.hardware.display.DisplayManager;
+import android.net.Uri;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Display;
@@ -14,8 +18,6 @@ import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import android.widget.TextView;
 
-import java.io.File;
-import java.io.FileInputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.Executors;
@@ -28,19 +30,12 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 /**
  * LSPosed module — status bar brightness gesture.
  *
- * Hook targets (confirmed working from v1.0 git baseline):
- *   PhoneStatusBarView.onTouchEvent        — shade CLOSED
- *   NotificationShadeWindowView.dispatchTouchEvent — shade OPEN
+ * Hooking: uses findHookMethod() to reflect into XposedBridge at runtime,
+ * bypassing LSPosed's obfuscation of hookMethod().
  *
- * Brightness % formula (from DerpFest BrightnessController source):
- *   The QS slider uses GAMMA_SPACE_MAX=65535 as its integer range.
- *   convertLinearToGammaFloat(linear, min, max) maps a linear float to
- *   an integer 0..GAMMA_SPACE_MAX in gamma space.
- *   Slider % = sliderVal / GAMMA_SPACE_MAX * 100
- *
- *   We call convertLinearToGammaFloat via reflection on BrightnessUtils,
- *   exactly as BrightnessController does. This gives us the same % the
- *   QS slider shows.
+ * Prefs: ContentProvider pattern — SettingsActivity writes SharedPreferences,
+ * RemotePrefProvider exposes them, hook reads via ContentResolver.call() and
+ * registers a ContentObserver for live updates.
  */
 @SuppressWarnings({"JavaReflectionMemberAccess", "ConstantConditions"})
 public class BrightnessGestureHook implements IXposedHookLoadPackage {
@@ -52,17 +47,17 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             "com.android.systemui.statusbar.phone.PhoneStatusBarView";
     private static final String SHADE_WINDOW_CLASS =
             "com.android.systemui.shade.NotificationShadeWindowView";
-
-    // BrightnessUtils constants — from BrightnessController source
     private static final String BRIGHTNESS_UTILS_CLASS =
             "com.android.settingslib.display.BrightnessUtils";
-    private static final int GAMMA_SPACE_MAX = 65535;
 
+    private static final int GAMMA_SPACE_MAX = 65535;
     private static final float STATUS_BAR_Y_FRACTION = 0.06f;
     private static final float HORIZONTAL_RATIO = 2.0f;
     private static final float GAMMA = 2.2f;
     private static final long INDICATOR_DISMISS_DELAY_MS = 800;
-    private static final long PREF_CACHE_MS = 1000;
+
+    private static final Uri PREFS_URI =
+            Uri.parse("content://" + Prefs.AUTHORITY + "/");
 
     // ── Per-gesture state ─────────────────────────────────────────────────────
 
@@ -73,9 +68,9 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     // ── Cached resources ──────────────────────────────────────────────────────
 
-    private Context mContext;
     private DisplayManager mDisplayManager;
     private WindowManager mWindowManager;
+    private ContentResolver mContentResolver;
     private int mScreenWidth;
     private int mScreenHeight;
     private float mGestureSlopPx = 48f;
@@ -85,7 +80,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private Method mSetTemporaryBrightnessMethod;
     private Method mSetBrightnessMethod;
     private Method mGetBrightnessInfoMethod;
-    private Method mConvertLinearToGammaMethod;  // BrightnessUtils.convertLinearToGammaFloat
+    private Method mConvertLinearToGammaMethod;
 
     private Field mBrightnessField;
     private Field mBrightnessMinField;
@@ -104,9 +99,9 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     // ── Prefs ─────────────────────────────────────────────────────────────────
 
-    private boolean mGestureEnabled = true;
-    private boolean mOverlayEnabled = true;
-    private long mLastPrefReadMs = 0;
+    private boolean mPrefsInitialized = false;
+    private volatile boolean mGestureEnabled = true;
+    private volatile boolean mOverlayEnabled  = true;
 
     // ── Entry point ───────────────────────────────────────────────────────────
 
@@ -116,57 +111,29 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
         XposedBridge.log(TAG + ": loading in SystemUI");
 
+        // Reflect into XposedBridge at runtime to find the real hookMethod —
+        // bypasses LSPosed's obfuscation of the class and method names.
         Method hookMethodFn = findHookMethod();
         if (hookMethodFn == null) {
             XposedBridge.log(TAG + ": could not find hookMethod() — aborting");
             return;
         }
 
-        hookClass(PHONE_STATUS_BAR_VIEW, "onTouchEvent",
+        hookTouchTarget(PHONE_STATUS_BAR_VIEW, "onTouchEvent",
                 lpparam.classLoader, hookMethodFn, true);
-        hookClass(SHADE_WINDOW_CLASS, "dispatchTouchEvent",
+        hookTouchTarget(SHADE_WINDOW_CLASS, "dispatchTouchEvent",
                 lpparam.classLoader, hookMethodFn, false);
+        hookAttachedToWindow(PHONE_STATUS_BAR_VIEW,
+                lpparam.classLoader, hookMethodFn);
     }
 
-    private void hookClass(String className, String methodName, ClassLoader classLoader,
-                           Method hookMethodFn, boolean isStatusBarView) {
-        try {
-            Class<?> targetClass = Class.forName(className, false, classLoader);
-            Method targetMethod = targetClass.getDeclaredMethod(methodName, MotionEvent.class);
+    // ── Runtime reflection to find LSPosed's real hookMethod ──────────────────
 
-            hookMethodFn.invoke(null, targetMethod, new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    MotionEvent ev = (MotionEvent) param.args[0];
-                    if (ev == null) return;
-
-                    if (mDisplayManager == null) {
-                        initResources(param.thisObject);
-                    }
-
-                    if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                        refreshPrefs();
-                    }
-
-                    if (!mGestureEnabled) return;
-
-                    if (handleTouchEvent(ev, isStatusBarView)) {
-                        param.setResult(true);
-                    }
-                }
-            });
-
-            XposedBridge.log(TAG + ": hooked " + className + "." + methodName);
-
-        } catch (ClassNotFoundException e) {
-            XposedBridge.log(TAG + ": class not found: " + className);
-        } catch (NoSuchMethodException e) {
-            XposedBridge.log(TAG + ": " + methodName + " not found in: " + className);
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": failed to hook " + className + ": " + t);
-        }
-    }
-
+    /**
+     * LSPosed obfuscates XposedBridge — the static method hookMethod(Member, XC_MethodHook)
+     * exists but under a randomised class name. We find it by scanning the declared
+     * methods of the XposedBridge class object at runtime and matching by signature.
+     */
     private Method findHookMethod() {
         for (Method m : XposedBridge.class.getDeclaredMethods()) {
             Class<?>[] params = m.getParameterTypes();
@@ -180,59 +147,122 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         return null;
     }
 
-    // ── Prefs ─────────────────────────────────────────────────────────────────
+    // ── Touch hook setup ──────────────────────────────────────────────────────
 
-    private void refreshPrefs() {
-        long now = System.currentTimeMillis();
-        if (now - mLastPrefReadMs < PREF_CACHE_MS) return;
-        mLastPrefReadMs = now;
-
-        String content = readPlainTextPrefs();
-        if (content == null) return;
-
-        boolean gesture = true, overlay = true;
-        for (String line : content.split("\n")) {
-            String[] parts = line.split("=", 2);
-            if (parts.length != 2) continue;
-            String key = parts[0].trim(), val = parts[1].trim();
-            if (Prefs.KEY_GESTURE_ENABLED.equals(key)) gesture = Boolean.parseBoolean(val);
-            if (Prefs.KEY_OVERLAY_ENABLED.equals(key)) overlay = Boolean.parseBoolean(val);
-        }
-        mGestureEnabled = gesture;
-        mOverlayEnabled = overlay;
-        XposedBridge.log(TAG + ": prefs — gesture=" + gesture + " overlay=" + overlay);
-    }
-
-    private String readPlainTextPrefs() {
-        String[] paths = {
-                "/data/data/dev.module.statusbarbrightnessgesture/files/" + Prefs.PLAIN_TEXT_FILE,
-                "/data/user/0/dev.module.statusbarbrightnessgesture/files/" + Prefs.PLAIN_TEXT_FILE,
-                "/data/user_de/0/dev.module.statusbarbrightnessgesture/files/" + Prefs.PLAIN_TEXT_FILE,
-        };
-        for (String path : paths) {
-            try {
-                File f = new File(path);
-                if (!f.exists()) continue;
-                FileInputStream fis = new FileInputStream(f);
-                byte[] buf = new byte[(int) f.length()];
-                fis.read(buf);
-                fis.close();
-                return new String(buf, java.nio.charset.StandardCharsets.UTF_8);
-            } catch (Throwable ignored) {}
-        }
-        return null;
-    }
-
-    // ── Resource initialisation ───────────────────────────────────────────────
-
-    private void initResources(Object viewInstance) {
+    private void hookTouchTarget(String className, String methodName,
+                                 ClassLoader classLoader, Method hookMethodFn,
+                                 boolean isStatusBarView) {
         try {
-            Context context = (Context) viewInstance.getClass()
-                    .getMethod("getContext").invoke(viewInstance);
-            if (context == null) return;
+            Class<?> cls = Class.forName(className, false, classLoader);
+            Method target = cls.getDeclaredMethod(methodName, MotionEvent.class);
+            hookMethodFn.invoke(null, target, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    MotionEvent ev = (MotionEvent) param.args[0];
+                    if (ev == null) return;
+                    if (mDisplayManager == null) {
+                        try {
+                            Context ctx = (Context) param.thisObject.getClass()
+                                    .getMethod("getContext").invoke(param.thisObject);
+                            if (ctx != null) initDisplayResources(ctx);
+                        } catch (Throwable t) {
+                            XposedBridge.log(TAG + ": display init failed: " + t);
+                        }
+                    }
+                    if (!mGestureEnabled) return;
+                    if (handleTouchEvent(ev, isStatusBarView)) {
+                        param.setResult(true);
+                    }
+                }
+            });
+            XposedBridge.log(TAG + ": hooked " + className + "." + methodName);
+        } catch (ClassNotFoundException e) {
+            XposedBridge.log(TAG + ": class not found: " + className);
+        } catch (NoSuchMethodException e) {
+            XposedBridge.log(TAG + ": method not found: " + methodName);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": hook failed for " + className + ": " + t);
+        }
+    }
 
-            mContext        = context;
-            mMainHandler    = new Handler(Looper.getMainLooper());
+    private void hookAttachedToWindow(String className, ClassLoader classLoader,
+                                      Method hookMethodFn) {
+        try {
+            Class<?> cls = Class.forName(className, false, classLoader);
+            Method target = cls.getDeclaredMethod("onAttachedToWindow");
+            hookMethodFn.invoke(null, target, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Context ctx = (Context) param.thisObject.getClass()
+                                .getMethod("getContext").invoke(param.thisObject);
+                        if (ctx == null) return;
+                        if (!mPrefsInitialized) initPrefs(ctx);
+                        if (mDisplayManager == null) initDisplayResources(ctx);
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": onAttachedToWindow init failed: " + t);
+                    }
+                }
+            });
+            XposedBridge.log(TAG + ": hooked " + className + ".onAttachedToWindow");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": failed to hook onAttachedToWindow: " + t);
+        }
+    }
+
+    // ── ContentProvider prefs ─────────────────────────────────────────────────
+
+    private void initPrefs(Context context) {
+        try {
+            if (mMainHandler == null) mMainHandler = new Handler(Looper.getMainLooper());
+            mContentResolver = context.getContentResolver();
+
+            mGestureEnabled = getPref(Prefs.KEY_GESTURE_ENABLED, true);
+            mOverlayEnabled  = getPref(Prefs.KEY_OVERLAY_ENABLED,  true);
+
+            ContentObserver observer = new ContentObserver(mMainHandler) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    boolean prevGesture = mGestureEnabled;
+                    mGestureEnabled = getPref(Prefs.KEY_GESTURE_ENABLED, true);
+                    mOverlayEnabled  = getPref(Prefs.KEY_OVERLAY_ENABLED,  true);
+                    XposedBridge.log(TAG + ": prefs updated — gesture="
+                            + mGestureEnabled + " overlay=" + mOverlayEnabled);
+                    if (prevGesture && !mGestureEnabled && mIndicatorAttached) {
+                        hideIndicator();
+                    }
+                }
+            };
+            mContentResolver.registerContentObserver(PREFS_URI, true, observer);
+
+            mPrefsInitialized = true;
+            XposedBridge.log(TAG + ": prefs init — gesture=" + mGestureEnabled
+                    + " overlay=" + mOverlayEnabled);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": prefs init failed: " + t);
+        }
+    }
+
+    private boolean getPref(String key, boolean defaultVal) {
+        try {
+            Bundle extras = new Bundle();
+            extras.putBoolean(RemotePrefProvider.EXTRA_DEFAULT, defaultVal);
+            Bundle result = mContentResolver.call(
+                    PREFS_URI, RemotePrefProvider.METHOD_GET, key, extras);
+            if (result != null) {
+                return result.getBoolean(RemotePrefProvider.EXTRA_VALUE, defaultVal);
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": getPref(" + key + ") failed: " + t);
+        }
+        return defaultVal;
+    }
+
+    // ── Display resource initialisation ──────────────────────────────────────
+
+    private void initDisplayResources(Context context) {
+        try {
+            if (mMainHandler == null) mMainHandler = new Handler(Looper.getMainLooper());
             mDisplayManager = (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
             mWindowManager  = (WindowManager)  context.getSystemService(Context.WINDOW_SERVICE);
 
@@ -242,8 +272,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
             float density = context.getResources().getDisplayMetrics().density;
             mGestureSlopPx = Math.max(
-                    ViewConfiguration.get(context).getScaledTouchSlop(),
-                    12f * density);
+                    ViewConfiguration.get(context).getScaledTouchSlop(), 12f * density);
 
             mSetTemporaryBrightnessMethod = DisplayManager.class
                     .getDeclaredMethod("setTemporaryBrightness", int.class, float.class);
@@ -256,27 +285,24 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             mGetBrightnessInfoMethod = Display.class.getDeclaredMethod("getBrightnessInfo");
             mGetBrightnessInfoMethod.setAccessible(true);
 
-            // BrightnessUtils.convertLinearToGammaFloat(float val, float min, float max)
-            // Used by BrightnessController to convert linear brightness to QS slider position.
-            // We use the same method so our overlay % exactly matches the QS slider %.
             try {
-                Class<?> brightnessUtils = Class.forName(
+                Class<?> bu = Class.forName(
                         BRIGHTNESS_UTILS_CLASS, false, context.getClassLoader());
-                mConvertLinearToGammaMethod = brightnessUtils.getMethod(
+                mConvertLinearToGammaMethod = bu.getMethod(
                         "convertLinearToGammaFloat", float.class, float.class, float.class);
                 XposedBridge.log(TAG + ": found BrightnessUtils.convertLinearToGammaFloat");
             } catch (Throwable t) {
-                XposedBridge.log(TAG + ": BrightnessUtils not found, using fallback gamma: " + t);
+                XposedBridge.log(TAG + ": BrightnessUtils not found, using fallback");
             }
 
             readBrightnessRange();
             initIndicator(context);
 
-            XposedBridge.log(TAG + ": init done — screen=" + mScreenWidth + "x" + mScreenHeight
+            XposedBridge.log(TAG + ": display init — screen=" + mScreenWidth
+                    + "x" + mScreenHeight
                     + " range=[" + mBrightnessMin + ", " + mBrightnessMax + "]");
-
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": initResources failed: " + t);
+            XposedBridge.log(TAG + ": initDisplayResources failed: " + t);
         }
     }
 
@@ -295,7 +321,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             mBrightnessMin = (float) mBrightnessMinField.get(info);
             mBrightnessMax = (float) mBrightnessMaxField.get(info);
         } catch (Throwable t) {
-            mBrightnessMin = 0.0f; mBrightnessMax = 1.0f;
+            mBrightnessMin = 0.0f;
+            mBrightnessMax = 1.0f;
             XposedBridge.log(TAG + ": readBrightnessRange fallback: " + t);
         }
     }
@@ -321,7 +348,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             mIndicatorView.setBackground(bg);
 
             float d = context.getResources().getDisplayMetrics().density;
-            mIndicatorView.setPadding((int)(14*d),(int)(6*d),(int)(14*d),(int)(6*d));
+            mIndicatorView.setPadding(
+                    (int)(14*d), (int)(6*d), (int)(14*d), (int)(6*d));
 
             mIndicatorParams = new WindowManager.LayoutParams(
                     WindowManager.LayoutParams.WRAP_CONTENT,
@@ -333,7 +361,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                     PixelFormat.TRANSLUCENT);
             mIndicatorParams.gravity = Gravity.TOP | Gravity.START;
             mIndicatorView.setAlpha(0f);
-
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": initIndicator failed: " + t);
         }
@@ -346,24 +373,12 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     private int getContrastingTextColour(int bg) {
         double r = Color.red(bg)/255.0, g = Color.green(bg)/255.0, b = Color.blue(bg)/255.0;
-        r = r<=0.03928?r/12.92:Math.pow((r+0.055)/1.055,2.4);
-        g = g<=0.03928?g/12.92:Math.pow((g+0.055)/1.055,2.4);
-        b = b<=0.03928?b/12.92:Math.pow((b+0.055)/1.055,2.4);
-        return (0.2126*r+0.7152*g+0.0722*b)<0.35 ? Color.WHITE : Color.BLACK;
+        r = r<=0.03928?r/12.92:Math.pow((r+0.055)/1.055, 2.4);
+        g = g<=0.03928?g/12.92:Math.pow((g+0.055)/1.055, 2.4);
+        b = b<=0.03928?b/12.92:Math.pow((b+0.055)/1.055, 2.4);
+        return (0.2126*r + 0.7152*g + 0.0722*b) < 0.35 ? Color.WHITE : Color.BLACK;
     }
 
-    /**
-     * Shows the brightness % indicator.
-     *
-     * Uses BrightnessUtils.convertLinearToGammaFloat(linear, min, max) — the exact
-     * same method BrightnessController uses to position the QS slider.
-     * pct = convertLinearToGammaFloat(linear, min, max) / GAMMA_SPACE_MAX * 100
-     *
-     * This guarantees the overlay % matches the QS slider position exactly.
-     *
-     * @param fingerX          view-local X coordinate (0→screenWidth)
-     * @param linearBrightness the linear float we just sent to setTemporaryBrightness
-     */
     private void showIndicator(float fingerX, float linearBrightness) {
         if (mIndicatorView == null || mWindowManager == null || mMainHandler == null) return;
         if (!mOverlayEnabled) return;
@@ -371,7 +386,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         mMainHandler.removeCallbacks(mDismissIndicator);
 
         int pct = linearToDisplayPct(linearBrightness);
-
         mIndicatorView.setText(pct + "%");
         mIndicatorView.measure(
                 android.view.View.MeasureSpec.makeMeasureSpec(0,
@@ -379,7 +393,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 android.view.View.MeasureSpec.makeMeasureSpec(0,
                         android.view.View.MeasureSpec.UNSPECIFIED));
 
-        int viewW = mIndicatorView.getMeasuredWidth();
+        int viewW   = mIndicatorView.getMeasuredWidth();
         int yOffset = (int)(mScreenHeight * 0.055f);
         int xOffset = Math.max(4, Math.min(mScreenWidth - viewW - 4,
                 (int)(fingerX - viewW / 2f)));
@@ -400,14 +414,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         }
     }
 
-    /**
-     * Converts a linear brightness float to the display percentage shown in QS/Settings.
-     *
-     * Mirrors BrightnessController.updateSlider():
-     *   final int sliderVal = convertLinearToGammaFloat(brightnessValue, min, max);
-     *   // sliderVal is in range [0, GAMMA_SPACE_MAX]
-     *   pct = sliderVal / GAMMA_SPACE_MAX * 100
-     */
     private int linearToDisplayPct(float linear) {
         try {
             if (mConvertLinearToGammaMethod != null) {
@@ -417,14 +423,11 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                         Math.round((float) gammaVal / GAMMA_SPACE_MAX * 100f)));
             }
         } catch (Throwable ignored) {}
-
-        // Fallback: manual gamma conversion (same formula as BrightnessUtils internally)
         float range = mBrightnessMax - mBrightnessMin;
         if (range <= 0) return 0;
-        float normalised = (linear - mBrightnessMin) / range;
-        normalised = Math.max(0f, Math.min(1f, normalised));
-        float gamma = (float) Math.pow(normalised, 1.0 / GAMMA);
-        return Math.max(0, Math.min(100, Math.round(gamma * 100f)));
+        float n = Math.max(0f, Math.min(1f, (linear - mBrightnessMin) / range));
+        return Math.max(0, Math.min(100,
+                Math.round((float) Math.pow(n, 1.0 / GAMMA) * 100f)));
     }
 
     private void hideIndicator() {

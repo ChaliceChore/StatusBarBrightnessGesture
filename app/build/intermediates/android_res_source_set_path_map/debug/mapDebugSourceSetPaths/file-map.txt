@@ -1,8 +1,8 @@
-dev.module.statusbarbrightnessgesture.app-pngs-0 C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\build\generated\res\pngs\debug
-dev.module.statusbarbrightnessgesture.app-resValues-1 C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\build\generated\res\resValues\debug
-dev.module.statusbarbrightnessgesture.app-updated_navigation_xml-2 C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\build\generated\updated_navigation_xml\debug
-dev.module.statusbarbrightnessgesture.app-packageDebugResources-3 C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
-dev.module.statusbarbrightnessgesture.app-packageDebugResources-4 C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
-dev.module.statusbarbrightnessgesture.app-debug-5 C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\build\intermediates\merged_res\debug\mergeDebugResources
-dev.module.statusbarbrightnessgesture.app-debug-6 C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\debug\res
-dev.module.statusbarbrightnessgesture.app-main-7 C:\Users\matthew\StudioProjects\StatusBarBrightnessGesture\app\src\main\res
+dev.module.statusbarbrightnessgesture.app-pngs-0 C:\Users\matthew\AndroidStudioProjects\StatusBarBrightnessGesture\app\build\generated\res\pngs\debug
+dev.module.statusbarbrightnessgesture.app-resValues-1 C:\Users\matthew\AndroidStudioProjects\StatusBarBrightnessGesture\app\build\generated\res\resValues\debug
+dev.module.statusbarbrightnessgesture.app-updated_navigation_xml-2 C:\Users\matthew\AndroidStudioProjects\StatusBarBrightnessGesture\app\build\generated\updated_navigation_xml\debug
+dev.module.statusbarbrightnessgesture.app-packageDebugResources-3 C:\Users\matthew\AndroidStudioProjects\StatusBarBrightnessGesture\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+dev.module.statusbarbrightnessgesture.app-packageDebugResources-4 C:\Users\matthew\AndroidStudioProjects\StatusBarBrightnessGesture\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+dev.module.statusbarbrightnessgesture.app-debug-5 C:\Users\matthew\AndroidStudioProjects\StatusBarBrightnessGesture\app\build\intermediates\merged_res\debug\mergeDebugResources
+dev.module.statusbarbrightnessgesture.app-debug-6 C:\Users\matthew\AndroidStudioProjects\StatusBarBrightnessGesture\app\src\debug\res
+dev.module.statusbarbrightnessgesture.app-main-7 C:\Users\matthew\AndroidStudioProjects\StatusBarBrightnessGesture\app\src\main\res

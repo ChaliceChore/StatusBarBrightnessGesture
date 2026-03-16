@@ -13,9 +13,6 @@ import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 
-import java.io.File;
-import java.io.FileOutputStream;
-
 @SuppressWarnings("deprecation")
 public class SettingsActivity extends Activity {
 
@@ -24,9 +21,6 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-        // MODE_PRIVATE — safe on all Android versions.
-        // The hook reads a plain-text file written by writePlainTextPrefs() instead.
         mPrefs = getSharedPreferences(Prefs.PREF_FILE, MODE_PRIVATE);
 
         float dp = getResources().getDisplayMetrics().density;
@@ -40,7 +34,6 @@ public class SettingsActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(root);
 
-        // ── Header ────────────────────────────────────────────────────────────
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.VERTICAL);
         header.setBackgroundColor(Color.WHITE);
@@ -63,12 +56,14 @@ public class SettingsActivity extends Activity {
         root.addView(header, matchWidth());
         root.addView(divider(dp), matchWidth());
 
-        root.addView(buildToggleRow("Enable gesture",
+        root.addView(buildToggleRow(
+                "Enable gesture",
                 "Swipe left to dim, right to brighten",
                 Prefs.KEY_GESTURE_ENABLED, true, dp, hPad, vPad), matchWidth());
         root.addView(divider(dp), matchWidth());
 
-        root.addView(buildToggleRow("Show brightness indicator",
+        root.addView(buildToggleRow(
+                "Show brightness indicator",
                 "Displays brightness % while swiping",
                 Prefs.KEY_OVERLAY_ENABLED, true, dp, hPad, vPad), matchWidth());
         root.addView(divider(dp), matchWidth());
@@ -88,12 +83,10 @@ public class SettingsActivity extends Activity {
         for (String tip : new String[]{
                 "• Swipe right on the status bar to increase brightness",
                 "• Swipe left to decrease brightness",
-                "• Left edge = minimum brightness (same as QS slider)",
-                "• Right edge = maximum brightness",
-                "• The % indicator shows swipe position (0%=left, 100%=right)",
-                "• Indicator colour follows your wallpaper accent",
                 "• Works with notification shade open or closed",
-                "• Works on the lockscreen"}) {
+                "• Works on the lockscreen",
+                "• The % indicator matches the system brightness display",
+                "• Indicator colour follows your wallpaper accent"}) {
             TextView t = new TextView(this);
             t.setText(tip);
             t.setTextSize(13);
@@ -144,49 +137,11 @@ public class SettingsActivity extends Activity {
 
         Switch sw = new Switch(this);
         sw.setChecked(mPrefs.getBoolean(prefKey, defaultVal));
-        sw.setOnCheckedChangeListener((CompoundButton b, boolean checked) -> {
-            mPrefs.edit().putBoolean(prefKey, checked).commit();
-            writePlainTextPrefs();
-        });
+        sw.setOnCheckedChangeListener((CompoundButton b, boolean checked) ->
+                mPrefs.edit().putBoolean(prefKey, checked).apply());
         row.addView(sw);
         row.setOnClickListener(v -> sw.toggle());
         return row;
-    }
-
-    /**
-     * Writes prefs as a plain key=value text file to the app's files directory,
-     * then makes it world-readable so SystemUI can read it cross-process.
-     * This avoids the MODE_WORLD_READABLE SharedPreferences restriction.
-     */
-    private void writePlainTextPrefs() {
-        try {
-            boolean gesture = mPrefs.getBoolean(Prefs.KEY_GESTURE_ENABLED, true);
-            boolean overlay = mPrefs.getBoolean(Prefs.KEY_OVERLAY_ENABLED, true);
-            String content = Prefs.KEY_GESTURE_ENABLED + "=" + gesture + "\n"
-                    + Prefs.KEY_OVERLAY_ENABLED + "=" + overlay + "\n";
-
-            File dir = getFilesDir();
-            if (!dir.exists()) dir.mkdirs();
-            File f = new File(dir, Prefs.PLAIN_TEXT_FILE);
-
-            FileOutputStream fos = new FileOutputStream(f);
-            fos.write(content.getBytes("UTF-8"));
-            fos.close();
-
-            // Make world-readable so SystemUI process can read it
-            f.setReadable(true, false);
-            f.getParentFile().setExecutable(true, false);
-            f.getParentFile().setReadable(true, false);
-
-        } catch (Throwable t) {
-            // Ignore — gesture still works, toggles just won't take effect
-        }
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        writePlainTextPrefs();
     }
 
     private View divider(float dp) {
