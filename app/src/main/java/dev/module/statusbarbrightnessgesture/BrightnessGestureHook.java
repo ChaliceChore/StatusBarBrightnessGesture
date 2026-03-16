@@ -1,14 +1,13 @@
 package dev.module.statusbarbrightnessgesture;
 
-import android.database.ContentObserver;
-import android.content.ContentResolver;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.hardware.display.DisplayManager;
-import android.net.Uri;
-import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Display;
@@ -30,12 +29,16 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 /**
  * LSPosed module — status bar brightness gesture.
  *
- * Hooking: uses findHookMethod() to reflect into XposedBridge at runtime,
- * bypassing LSPosed's obfuscation of hookMethod().
+ * Hooking: findHookMethod() reflects into XposedBridge at runtime to bypass
+ * LSPosed's obfuscation of hookMethod().
  *
- * Prefs: ContentProvider pattern — SettingsActivity writes SharedPreferences,
- * RemotePrefProvider exposes them, hook reads via ContentResolver.call() and
- * registers a ContentObserver for live updates.
+ * Prefs: broadcast approach.
+ *   - SettingsActivity writes to SharedPreferences and sends a targeted
+ *     broadcast to com.android.systemui with the new values as extras.
+ *   - Hook registers a BroadcastReceiver inside SystemUI from onAttachedToWindow —
+ *     guaranteed safe timing, no race condition.
+ *   - SettingsActivity also re-sends on onResume() so values survive SystemUI restarts.
+ *   - No permissions needed.
  */
 @SuppressWarnings({"JavaReflectionMemberAccess", "ConstantConditions"})
 public class BrightnessGestureHook implements IXposedHookLoadPackage {
@@ -56,9 +59,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private static final float GAMMA = 2.2f;
     private static final long INDICATOR_DISMISS_DELAY_MS = 800;
 
-    private static final Uri PREFS_URI =
-            Uri.parse("content://" + Prefs.AUTHORITY + "/");
-
     // ── Per-gesture state ─────────────────────────────────────────────────────
 
     private float mDownX;
@@ -70,7 +70,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     private DisplayManager mDisplayManager;
     private WindowManager mWindowManager;
-    private ContentResolver mContentResolver;
     private int mScreenWidth;
     private int mScreenHeight;
     private float mGestureSlopPx = 48f;
@@ -99,7 +98,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     // ── Prefs ─────────────────────────────────────────────────────────────────
 
-    private boolean mPrefsInitialized = false;
+    private boolean mReceiverRegistered = false;
     private volatile boolean mGestureEnabled = true;
     private volatile boolean mOverlayEnabled  = true;
 
@@ -111,8 +110,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
         XposedBridge.log(TAG + ": loading in SystemUI");
 
-        // Reflect into XposedBridge at runtime to find the real hookMethod —
-        // bypasses LSPosed's obfuscation of the class and method names.
         Method hookMethodFn = findHookMethod();
         if (hookMethodFn == null) {
             XposedBridge.log(TAG + ": could not find hookMethod() — aborting");
@@ -129,11 +126,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     // ── Runtime reflection to find LSPosed's real hookMethod ──────────────────
 
-    /**
-     * LSPosed obfuscates XposedBridge — the static method hookMethod(Member, XC_MethodHook)
-     * exists but under a randomised class name. We find it by scanning the declared
-     * methods of the XposedBridge class object at runtime and matching by signature.
-     */
     private Method findHookMethod() {
         for (Method m : XposedBridge.class.getDeclaredMethods()) {
             Class<?>[] params = m.getParameterTypes();
@@ -145,6 +137,59 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             }
         }
         return null;
+    }
+
+    // ── onAttachedToWindow — register receiver and init resources ─────────────
+
+    private void hookAttachedToWindow(String className, ClassLoader classLoader,
+                                      Method hookMethodFn) {
+        try {
+            Class<?> cls = Class.forName(className, false, classLoader);
+            Method target = cls.getDeclaredMethod("onAttachedToWindow");
+            hookMethodFn.invoke(null, target, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Context ctx = (Context) param.thisObject.getClass()
+                                .getMethod("getContext").invoke(param.thisObject);
+                        if (ctx == null) return;
+                        if (!mReceiverRegistered) registerPrefsReceiver(ctx);
+                        if (mDisplayManager == null) initDisplayResources(ctx);
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": onAttachedToWindow init failed: " + t);
+                    }
+                }
+            });
+            XposedBridge.log(TAG + ": hooked " + className + ".onAttachedToWindow");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": failed to hook onAttachedToWindow: " + t);
+        }
+    }
+
+    // ── Broadcast receiver for prefs ──────────────────────────────────────────
+
+    private void registerPrefsReceiver(Context context) {
+        if (mReceiverRegistered) return;
+        mReceiverRegistered = true;
+
+        BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context ctx, Intent intent) {
+                if (!Prefs.ACTION_PREFS_CHANGED.equals(intent.getAction())) return;
+                boolean prevGesture = mGestureEnabled;
+                mGestureEnabled = intent.getBooleanExtra(Prefs.KEY_GESTURE_ENABLED, true);
+                mOverlayEnabled  = intent.getBooleanExtra(Prefs.KEY_OVERLAY_ENABLED,  true);
+                XposedBridge.log(TAG + ": prefs updated — gesture="
+                        + mGestureEnabled + " overlay=" + mOverlayEnabled);
+                if (prevGesture && !mGestureEnabled && mIndicatorAttached) {
+                    hideIndicator();
+                }
+            }
+        };
+
+        IntentFilter filter = new IntentFilter(Prefs.ACTION_PREFS_CHANGED);
+        context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
+        XposedBridge.log(TAG + ": prefs receiver registered");
     }
 
     // ── Touch hook setup ──────────────────────────────────────────────────────
@@ -183,79 +228,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hook failed for " + className + ": " + t);
         }
-    }
-
-    private void hookAttachedToWindow(String className, ClassLoader classLoader,
-                                      Method hookMethodFn) {
-        try {
-            Class<?> cls = Class.forName(className, false, classLoader);
-            Method target = cls.getDeclaredMethod("onAttachedToWindow");
-            hookMethodFn.invoke(null, target, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    try {
-                        Context ctx = (Context) param.thisObject.getClass()
-                                .getMethod("getContext").invoke(param.thisObject);
-                        if (ctx == null) return;
-                        if (!mPrefsInitialized) initPrefs(ctx);
-                        if (mDisplayManager == null) initDisplayResources(ctx);
-                    } catch (Throwable t) {
-                        XposedBridge.log(TAG + ": onAttachedToWindow init failed: " + t);
-                    }
-                }
-            });
-            XposedBridge.log(TAG + ": hooked " + className + ".onAttachedToWindow");
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": failed to hook onAttachedToWindow: " + t);
-        }
-    }
-
-    // ── ContentProvider prefs ─────────────────────────────────────────────────
-
-    private void initPrefs(Context context) {
-        try {
-            if (mMainHandler == null) mMainHandler = new Handler(Looper.getMainLooper());
-            mContentResolver = context.getContentResolver();
-
-            mGestureEnabled = getPref(Prefs.KEY_GESTURE_ENABLED, true);
-            mOverlayEnabled  = getPref(Prefs.KEY_OVERLAY_ENABLED,  true);
-
-            ContentObserver observer = new ContentObserver(mMainHandler) {
-                @Override
-                public void onChange(boolean selfChange) {
-                    boolean prevGesture = mGestureEnabled;
-                    mGestureEnabled = getPref(Prefs.KEY_GESTURE_ENABLED, true);
-                    mOverlayEnabled  = getPref(Prefs.KEY_OVERLAY_ENABLED,  true);
-                    XposedBridge.log(TAG + ": prefs updated — gesture="
-                            + mGestureEnabled + " overlay=" + mOverlayEnabled);
-                    if (prevGesture && !mGestureEnabled && mIndicatorAttached) {
-                        hideIndicator();
-                    }
-                }
-            };
-            mContentResolver.registerContentObserver(PREFS_URI, true, observer);
-
-            mPrefsInitialized = true;
-            XposedBridge.log(TAG + ": prefs init — gesture=" + mGestureEnabled
-                    + " overlay=" + mOverlayEnabled);
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": prefs init failed: " + t);
-        }
-    }
-
-    private boolean getPref(String key, boolean defaultVal) {
-        try {
-            Bundle extras = new Bundle();
-            extras.putBoolean(RemotePrefProvider.EXTRA_DEFAULT, defaultVal);
-            Bundle result = mContentResolver.call(
-                    PREFS_URI, RemotePrefProvider.METHOD_GET, key, extras);
-            if (result != null) {
-                return result.getBoolean(RemotePrefProvider.EXTRA_VALUE, defaultVal);
-            }
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": getPref(" + key + ") failed: " + t);
-        }
-        return defaultVal;
     }
 
     // ── Display resource initialisation ──────────────────────────────────────

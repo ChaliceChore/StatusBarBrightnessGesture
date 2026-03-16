@@ -1,4 +1,4 @@
-#Sun Mar 15 21:38:39 MDT 2026
+#Sun Mar 15 22:50:34 MDT 2026
 base.0=C\:\\Users\\matthew\\AndroidStudioProjects\\StatusBarBrightnessGesture\\app\\build\\intermediates\\dex\\debug\\mergeProjectDexDebug\\0\\classes.dex
 base.1=C\:\\Users\\matthew\\AndroidStudioProjects\\StatusBarBrightnessGesture\\app\\build\\intermediates\\dex\\debug\\mergeProjectDexDebug\\11\\classes.dex
 base.2=C\:\\Users\\matthew\\AndroidStudioProjects\\StatusBarBrightnessGesture\\app\\build\\intermediates\\global_synthetics_dex\\debug\\mergeDebugGlobalSynthetics\\classes.dex

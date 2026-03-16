@@ -1,6 +1,7 @@
 package dev.module.statusbarbrightnessgesture;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -21,7 +22,7 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        mPrefs = getSharedPreferences(Prefs.PREF_FILE, MODE_PRIVATE);
+        mPrefs = getSharedPreferences(Prefs.KEY_GESTURE_ENABLED + "_prefs", MODE_PRIVATE);
 
         float dp = getResources().getDisplayMetrics().density;
         int hPad = (int)(24*dp), vPad = (int)(20*dp);
@@ -56,16 +57,14 @@ public class SettingsActivity extends Activity {
         root.addView(header, matchWidth());
         root.addView(divider(dp), matchWidth());
 
-        root.addView(buildToggleRow(
-                "Enable gesture",
+        buildToggleRow(root, "Enable gesture",
                 "Swipe left to dim, right to brighten",
-                Prefs.KEY_GESTURE_ENABLED, true, dp, hPad, vPad), matchWidth());
+                Prefs.KEY_GESTURE_ENABLED, true, dp, hPad, vPad);
         root.addView(divider(dp), matchWidth());
 
-        root.addView(buildToggleRow(
-                "Show brightness indicator",
+        buildToggleRow(root, "Show brightness indicator",
                 "Displays brightness % while swiping",
-                Prefs.KEY_OVERLAY_ENABLED, true, dp, hPad, vPad), matchWidth());
+                Prefs.KEY_OVERLAY_ENABLED, true, dp, hPad, vPad);
         root.addView(divider(dp), matchWidth());
 
         LinearLayout hint = new LinearLayout(this);
@@ -105,10 +104,9 @@ public class SettingsActivity extends Activity {
         root.addView(note, matchWidth());
     }
 
-    private LinearLayout buildToggleRow(String titleText, String descText,
-                                        String prefKey, boolean defaultVal,
-                                        float dp, int hPad, int vPad) {
-
+    private void buildToggleRow(LinearLayout root, String titleText, String descText,
+                                String prefKey, boolean defaultVal,
+                                float dp, int hPad, int vPad) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setBackgroundColor(Color.WHITE);
@@ -137,11 +135,30 @@ public class SettingsActivity extends Activity {
 
         Switch sw = new Switch(this);
         sw.setChecked(mPrefs.getBoolean(prefKey, defaultVal));
-        sw.setOnCheckedChangeListener((CompoundButton b, boolean checked) ->
-                mPrefs.edit().putBoolean(prefKey, checked).apply());
+        sw.setOnCheckedChangeListener((CompoundButton b, boolean checked) -> {
+            mPrefs.edit().putBoolean(prefKey, checked).apply();
+            sendPrefs();
+        });
         row.addView(sw);
         row.setOnClickListener(v -> sw.toggle());
-        return row;
+
+        root.addView(row, matchWidth());
+    }
+
+    private void sendPrefs() {
+        Intent intent = new Intent(Prefs.ACTION_PREFS_CHANGED);
+        intent.setPackage("com.android.systemui");
+        intent.putExtra(Prefs.KEY_GESTURE_ENABLED,
+                mPrefs.getBoolean(Prefs.KEY_GESTURE_ENABLED, true));
+        intent.putExtra(Prefs.KEY_OVERLAY_ENABLED,
+                mPrefs.getBoolean(Prefs.KEY_OVERLAY_ENABLED, true));
+        sendBroadcast(intent);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        sendPrefs(); // re-sync on every resume in case SystemUI restarted
     }
 
     private View divider(float dp) {
