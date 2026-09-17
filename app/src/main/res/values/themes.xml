@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Base theme inheriting Material3 with dynamic colour support -->
+    <!-- Base theme. minSdk is 33, so the framework already supplies Material You
+         dynamic colours; no support library is needed for them. DeviceDefault
+         brings an action bar that the previous Material3 parent did not, so it
+         is suppressed to keep the screen as it was. -->
     <style name="Theme.StatusBarBrightnessGesture"
-        parent="Theme.Material3.DynamicColors.DayNight">
+        parent="@android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
     </style>
 </resources>

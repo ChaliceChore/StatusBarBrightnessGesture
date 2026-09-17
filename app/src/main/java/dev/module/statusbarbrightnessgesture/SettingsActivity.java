@@ -38,11 +38,6 @@ public class SettingsActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        try {
-            Class<?> dc = Class.forName("com.google.android.material.color.DynamicColors");
-            dc.getMethod("applyToActivityIfAvailable", Activity.class).invoke(null, this);
-        } catch (Throwable ignored) {}
-
         super.onCreate(savedInstanceState);
         resolveColours();
 
