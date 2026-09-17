@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Base theme inheriting Material3 with dynamic colour support -->
+    <!-- Base theme inheriting Material3 with dynamic colour support.
+         Light-mode variant: the window background is light, so the system bar
+         icons must be drawn dark to stay legible. See values-night for the
+         dark-mode counterpart. -->
     <style name="Theme.StatusBarBrightnessGesture"
         parent="Theme.Material3.DynamicColors.DayNight">
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 </resources>
