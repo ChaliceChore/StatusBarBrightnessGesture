@@ -11,6 +11,7 @@ import android.graphics.Typeface;
 import android.hardware.display.DisplayManager;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Display;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -55,6 +56,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             "com.android.settingslib.display.BrightnessUtils";
 
     private static final int GAMMA_SPACE_MAX = 65535;
+    /** How long a brightnessMinimum/Maximum reading is treated as current. */
+    private static final long BRIGHTNESS_RANGE_TTL_MS = 1000;
     private static final float STATUS_BAR_Y_FRACTION = 0.06f;
     private static final float HORIZONTAL_RATIO = 2.0f;
     private static final float GAMMA = 2.2f;
@@ -76,6 +79,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private float mGestureSlopPx = 48f;
     private float mBrightnessMin = -1f;
     private float mBrightnessMax = 1.0f;
+    private long mBrightnessRangeReadAt = 0;
 
     private Method mSetTemporaryBrightnessMethod;
     private Method mSetBrightnessMethod;
@@ -93,6 +97,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     // ── Indicator ─────────────────────────────────────────────────────────────
 
     private TextView mIndicatorView;
+    private int mIndicatorAccent = 0;
     private WindowManager.LayoutParams mIndicatorParams;
     private boolean mIndicatorAttached = false;
     private final Runnable mDismissIndicator = this::hideIndicator;
@@ -256,9 +261,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             mDisplayManager = (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
             mWindowManager  = (WindowManager)  context.getSystemService(Context.WINDOW_SERVICE);
 
-            android.graphics.Rect bounds = mWindowManager.getCurrentWindowMetrics().getBounds();
-            mScreenWidth  = bounds.width();
-            mScreenHeight = bounds.height();
+            refreshDisplayMetrics();
 
             float density = context.getResources().getDisplayMetrics().density;
             mGestureSlopPx = Math.max(
@@ -288,11 +291,41 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             readBrightnessRange();
             initIndicator(context);
 
+            // Screen size and brightness range both change while SystemUI keeps
+            // running — on rotation, and when the system caps brightness for
+            // thermal or ambient reasons. Without this the values read at init
+            // are used forever.
+            mDisplayManager.registerDisplayListener(mDisplayListener, mMainHandler);
+
             XposedBridge.log(TAG + ": display init — screen=" + mScreenWidth
                     + "x" + mScreenHeight
                     + " range=[" + mBrightnessMin + ", " + mBrightnessMax + "]");
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": initDisplayResources failed: " + t);
+        }
+    }
+
+    private final DisplayManager.DisplayListener mDisplayListener =
+            new DisplayManager.DisplayListener() {
+        @Override public void onDisplayAdded(int displayId) {}
+        @Override public void onDisplayRemoved(int displayId) {}
+        @Override public void onDisplayChanged(int displayId) {
+            if (displayId != Display.DEFAULT_DISPLAY) return;
+            refreshDisplayMetrics();
+            readBrightnessRange();
+        }
+    };
+
+    /** Re-reads the current screen bounds; they change on rotation. */
+    private void refreshDisplayMetrics() {
+        if (mWindowManager == null) return;
+        try {
+            android.graphics.Rect bounds =
+                    mWindowManager.getCurrentWindowMetrics().getBounds();
+            mScreenWidth  = bounds.width();
+            mScreenHeight = bounds.height();
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": refreshDisplayMetrics failed: " + t);
         }
     }
 
@@ -310,6 +343,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             }
             mBrightnessMin = (float) mBrightnessMinField.get(info);
             mBrightnessMax = (float) mBrightnessMaxField.get(info);
+            mBrightnessRangeReadAt = SystemClock.uptimeMillis();
         } catch (Throwable t) {
             mBrightnessMin = 0.0f;
             mBrightnessMax = 1.0f;
@@ -323,6 +357,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         try {
             int accent  = resolveAccentColour(context);
             int textCol = getContrastingTextColour(accent);
+            mIndicatorAccent = accent;
 
             mIndicatorView = new TextView(context);
             mIndicatorView.setTextColor(textCol);
@@ -374,6 +409,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         if (!mOverlayEnabled) return;
 
         mMainHandler.removeCallbacks(mDismissIndicator);
+        // Only when starting a fresh showing, so this stays off the per-move path.
+        if (!mIndicatorAttached) refreshIndicatorColours();
 
         int pct = linearToDisplayPct(linearBrightness);
         mIndicatorView.setText(pct + "%");
@@ -401,6 +438,27 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             mIndicatorView.setAlpha(1f);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": showIndicator failed: " + t);
+        }
+    }
+
+    /**
+     * Re-applies the wallpaper accent to the indicator. The colour was resolved
+     * once in initIndicator(), so a wallpaper or theme change left the pill
+     * showing the old accent until SystemUI restarted.
+     */
+    private void refreshIndicatorColours() {
+        if (mIndicatorView == null) return;
+        try {
+            int accent = resolveAccentColour(mIndicatorView.getContext());
+            if (accent == mIndicatorAccent) return;
+            mIndicatorAccent = accent;
+            mIndicatorView.setTextColor(getContrastingTextColour(accent));
+            android.graphics.drawable.Drawable bg = mIndicatorView.getBackground();
+            if (bg instanceof android.graphics.drawable.GradientDrawable) {
+                ((android.graphics.drawable.GradientDrawable) bg).setColor(accent);
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": refreshIndicatorColours failed: " + t);
         }
     }
 
@@ -489,7 +547,14 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     // ── Brightness computation ────────────────────────────────────────────────
 
     private float computeBrightness(float fingerX) {
-        if (mBrightnessMin < 0) readBrightnessRange();
+        // brightnessMaximum is not a constant: the system lowers it under
+        // thermal or ambient limits, so a reading taken at init drifts out of
+        // date and the gesture ends up mapping to the wrong top end.
+        if (mBrightnessMin < 0
+                || SystemClock.uptimeMillis() - mBrightnessRangeReadAt
+                        > BRIGHTNESS_RANGE_TTL_MS) {
+            readBrightnessRange();
+        }
         float fraction = Math.max(0f, Math.min(1f, fingerX / mScreenWidth));
         float gammaCorrected = (float) Math.pow(fraction, GAMMA);
         return Math.max(mBrightnessMin,
