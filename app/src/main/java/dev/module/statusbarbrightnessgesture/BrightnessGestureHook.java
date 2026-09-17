@@ -60,12 +60,30 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private static final float GAMMA = 2.2f;
     private static final long INDICATOR_DISMISS_DELAY_MS = 800;
 
+    /** Which hooked method a touch arrived through. */
+    private static final int TOUCH_SOURCE_NONE       = 0;
+    private static final int TOUCH_SOURCE_STATUS_BAR = 1;
+    private static final int TOUCH_SOURCE_SHADE      = 2;
+
+    /** What the caller should do with an event after handleTouchEvent(). */
+    private static final int TOUCH_PASS              = 0;
+    private static final int TOUCH_CONSUME           = 1;
+    private static final int TOUCH_CANCEL_UNDERLYING = 2;
+
     // ── Per-gesture state ─────────────────────────────────────────────────────
 
     private float mDownX;
     private float mDownY;
     private boolean mGestureActive = false;
     private boolean mTouchStartedInStatusBar = false;
+
+    /** Hook that owns the gesture in progress, or TOUCH_SOURCE_NONE. */
+    private int mGestureOwner = TOUCH_SOURCE_NONE;
+    /** downTime of the touch mGestureOwner claimed — identifies the same
+     *  physical gesture when it also arrives through the other hook. */
+    private long mOwnedDownTime = -1;
+    /** Cancel event passed to the original method; recycled once it returns. */
+    private MotionEvent mPendingCancel;
 
     // ── Cached resources ──────────────────────────────────────────────────────
 
@@ -218,6 +236,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         try {
             Class<?> cls = Class.forName(className, false, classLoader);
             Method target = cls.getDeclaredMethod(methodName, MotionEvent.class);
+            final int source = isStatusBarView
+                    ? TOUCH_SOURCE_STATUS_BAR : TOUCH_SOURCE_SHADE;
             hookMethodFn.invoke(null, target, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
@@ -233,8 +253,29 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                         }
                     }
                     if (!mGestureEnabled) return;
-                    if (handleTouchEvent(ev, isStatusBarView)) {
-                        param.setResult(true);
+
+                    switch (handleTouchEvent(ev, source)) {
+                        case TOUCH_CONSUME:
+                            param.setResult(true);
+                            break;
+                        case TOUCH_CANCEL_UNDERLYING:
+                            // Let the original method run, but hand it a cancel
+                            // in place of this move — see onMove() for why.
+                            MotionEvent cancel = MotionEvent.obtain(ev);
+                            cancel.setAction(MotionEvent.ACTION_CANCEL);
+                            mPendingCancel = cancel;
+                            param.args[0] = cancel;
+                            break;
+                        default:
+                            break;
+                    }
+                }
+
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    if (mPendingCancel != null) {
+                        mPendingCancel.recycle();
+                        mPendingCancel = null;
                     }
                 }
             });
@@ -434,45 +475,76 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     // ── Touch routing ─────────────────────────────────────────────────────────
 
-    private boolean handleTouchEvent(MotionEvent ev, boolean isStatusBarView) {
-        if (mDisplayManager == null || mScreenWidth == 0) return false;
+    private int handleTouchEvent(MotionEvent ev, int source) {
+        if (mDisplayManager == null || mScreenWidth == 0) return TOUCH_PASS;
         switch (ev.getActionMasked()) {
-            case MotionEvent.ACTION_DOWN:   return onDown(ev, isStatusBarView);
-            case MotionEvent.ACTION_MOVE:   return onMove(ev);
+            case MotionEvent.ACTION_DOWN:   return onDown(ev, source);
+            case MotionEvent.ACTION_MOVE:   return onMove(ev, source);
             case MotionEvent.ACTION_UP:
-            case MotionEvent.ACTION_CANCEL: return onUpOrCancel(ev);
-            default: return false;
+            case MotionEvent.ACTION_CANCEL: return onUpOrCancel(ev, source);
+            default: return TOUCH_PASS;
         }
     }
 
-    private boolean onDown(MotionEvent ev, boolean isStatusBarView) {
-        mGestureActive = false;
-        mTouchStartedInStatusBar = false;
-        boolean inRegion = isStatusBarView
+    private int onDown(MotionEvent ev, int source) {
+        // One physical touch can reach both hooks: PhoneStatusBarView.onTouchEvent
+        // and NotificationShadeWindowView.dispatchTouchEvent sit on the same
+        // delivery path while the shade is open. They share this object's state,
+        // so without an owner check the second DOWN would clear the gesture the
+        // first one just started. downTime is identical for both copies.
+        if (mGestureOwner != TOUCH_SOURCE_NONE
+                && mGestureOwner != source
+                && mOwnedDownTime == ev.getDownTime()) {
+            return TOUCH_PASS;
+        }
+
+        releaseGesture();
+
+        boolean inRegion = source == TOUCH_SOURCE_STATUS_BAR
                 || (ev.getY() <= mScreenHeight * STATUS_BAR_Y_FRACTION);
-        if (!inRegion) return false;
+        if (!inRegion) return TOUCH_PASS;
+
         mTouchStartedInStatusBar = true;
+        mGestureOwner = source;
+        mOwnedDownTime = ev.getDownTime();
         mDownX = ev.getX();
         mDownY = ev.getY();
-        return false;
+        // Not consumed on purpose: taps and vertical pull-downs must still reach
+        // SystemUI. The horizontal gesture is only recognised on MOVE.
+        return TOUCH_PASS;
     }
 
-    private boolean onMove(MotionEvent ev) {
-        if (!mTouchStartedInStatusBar) return false;
+    private int onMove(MotionEvent ev, int source) {
+        if (!mTouchStartedInStatusBar || source != mGestureOwner) return TOUCH_PASS;
         float absDX = Math.abs(ev.getX() - mDownX);
         float absDY = Math.abs(ev.getY() - mDownY);
+        boolean justActivated = false;
         if (!mGestureActive) {
-            if (absDX <= mGestureSlopPx || absDX <= absDY * HORIZONTAL_RATIO) return false;
+            if (absDX <= mGestureSlopPx || absDX <= absDY * HORIZONTAL_RATIO) {
+                return TOUCH_PASS;
+            }
             mGestureActive = true;
+            justActivated = true;
         }
         float brightness = computeBrightness(ev.getX());
         setTemporaryBrightness(brightness);
         showIndicator(ev.getX(), brightness);
-        return true;
+
+        // SystemUI started tracking a shade expansion back on ACTION_DOWN, which
+        // this hook deliberately let through so taps and pull-downs keep working.
+        // If the gesture now simply swallows every following event, that tracking
+        // is never ended and the shade settles open when the finger lifts. So on
+        // the event that recognises the gesture, hand ACTION_CANCEL to the
+        // original method to abort the expansion; everything after is consumed.
+        return justActivated ? TOUCH_CANCEL_UNDERLYING : TOUCH_CONSUME;
     }
 
-    private boolean onUpOrCancel(MotionEvent ev) {
-        if (!mGestureActive) { mTouchStartedInStatusBar = false; return false; }
+    private int onUpOrCancel(MotionEvent ev, int source) {
+        if (source != mGestureOwner) return TOUCH_PASS;
+        if (!mGestureActive) {
+            releaseGesture();
+            return TOUCH_PASS;
+        }
         boolean cancelled = ev.getActionMasked() == MotionEvent.ACTION_CANCEL;
         float finalBrightness = cancelled
                 ? getCurrentBrightness()
@@ -481,9 +553,16 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         commitBrightness(finalBrightness);
         if (mMainHandler != null)
             mMainHandler.postDelayed(mDismissIndicator, INDICATOR_DISMISS_DELAY_MS);
+        releaseGesture();
+        return TOUCH_CONSUME;
+    }
+
+    /** Clears all per-gesture state, including hook ownership. */
+    private void releaseGesture() {
         mGestureActive = false;
         mTouchStartedInStatusBar = false;
-        return true;
+        mGestureOwner = TOUCH_SOURCE_NONE;
+        mOwnedDownTime = -1;
     }
 
     // ── Brightness computation ────────────────────────────────────────────────
