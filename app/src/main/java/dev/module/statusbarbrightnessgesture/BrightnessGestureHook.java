@@ -341,6 +341,23 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             mIndicatorView.setPadding(
                     (int)(14*d), (int)(6*d), (int)(14*d), (int)(6*d));
 
+            // Reserve the width of the widest label the indicator can show, so
+            // the pill keeps a constant size as the text narrows (100% -> 99%
+            // -> 9%). showIndicator() centres the pill on the finger using its
+            // measured width, so a width that changes mid-gesture makes it jump
+            // sideways — most noticeably around 10%, where the label drops from
+            // two digits to one.
+            //
+            // The width is taken from the Paint rather than by measuring the
+            // view: measure() here would build the TextView's internal Layout
+            // before the view has ever had LayoutParams, and every later
+            // setText() would then take the checkForRelayout() path and throw
+            // NullPointerException on the null params.
+            int widest = (int) Math.ceil(mIndicatorView.getPaint().measureText("100%"));
+            mIndicatorView.setMinWidth(widest
+                    + mIndicatorView.getPaddingLeft()
+                    + mIndicatorView.getPaddingRight());
+
             mIndicatorParams = new WindowManager.LayoutParams(
                     WindowManager.LayoutParams.WRAP_CONTENT,
                     WindowManager.LayoutParams.WRAP_CONTENT,
