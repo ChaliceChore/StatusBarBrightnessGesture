@@ -374,6 +374,13 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         if (!mOverlayEnabled) return;
 
         mMainHandler.removeCallbacks(mDismissIndicator);
+        // A dismissal from the previous gesture may still be fading the view
+        // out, and that animation's end action removes the view from the
+        // WindowManager. Restoring alpha below does not stop it, so the
+        // indicator would disappear partway through this gesture. Cancelling
+        // the animation also drops the end action: ViewPropertyAnimator only
+        // runs withEndAction() when the animation finishes, not when cancelled.
+        mIndicatorView.animate().cancel();
 
         int pct = linearToDisplayPct(linearBrightness);
         mIndicatorView.setText(pct + "%");
