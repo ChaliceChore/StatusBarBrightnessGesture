@@ -4,20 +4,20 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Sized for the adaptive-icon safe zone: the launcher mask shows only the
+    <!-- Themed-icon (monochrome) layer — the system applies its own tint: the launcher mask shows only the
          centre 72x72 of this 108x108 canvas, so all artwork stays within a
          48dp-wide circle (radius 24 from centre) to avoid crowding the mask. -->
 
     <!-- Sun disc centred at 54,54 radius 14 -->
     <path
-        android:fillColor="#FFFFFF"
+        android:fillColor="#FF000000"
         android:pathData="M54,40 a14,14 0 1,0 0.001,0 Z"/>
 
     <!-- 8 rays, from radius 18 out to radius 24
          (diagonals: 18*cos45=12.73, 24*cos45=16.97) -->
     <path
         android:fillColor="#00000000"
-        android:strokeColor="#FFFFFF"
+        android:strokeColor="#FF000000"
         android:strokeWidth="3.5"
         android:strokeLineCap="round"
         android:pathData="
