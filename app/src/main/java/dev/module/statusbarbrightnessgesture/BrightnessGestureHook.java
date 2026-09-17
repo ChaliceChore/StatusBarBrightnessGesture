@@ -205,8 +205,14 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             }
         };
 
+        // Exported, because the sender is a different package (this module's
+        // settings app) — but gated on a signature permission so that only that
+        // app can deliver the broadcast. Without the permission any installed
+        // app could broadcast ACTION_PREFS_CHANGED and silently turn the
+        // gesture off, since the receiver trusts the extras it carries.
         IntentFilter filter = new IntentFilter(Prefs.ACTION_PREFS_CHANGED);
-        context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
+        context.registerReceiver(receiver, filter,
+                Prefs.PERMISSION_PREFS_CHANGED, null, Context.RECEIVER_EXPORTED);
         XposedBridge.log(TAG + ": prefs receiver registered");
     }
 

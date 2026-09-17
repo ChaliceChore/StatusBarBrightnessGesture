@@ -17,6 +17,14 @@ public final class Prefs {
     public static final String ACTION_PREFS_CHANGED  =
             "dev.module.statusbarbrightnessgesture.PREFS_CHANGED";
 
+    /**
+     * Signature-level permission a sender must hold to deliver
+     * ACTION_PREFS_CHANGED. Declared and requested by this app in the manifest,
+     * so only this app — or one signed with the same key — can send it.
+     */
+    public static final String PERMISSION_PREFS_CHANGED =
+            "dev.module.statusbarbrightnessgesture.permission.PREFS_CHANGED";
+
     public static final int DEFAULT_GESTURE_ENABLED = 1;
     public static final int DEFAULT_OVERLAY_ENABLED  = 1;
 
