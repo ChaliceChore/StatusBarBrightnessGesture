@@ -106,6 +106,12 @@ public class SettingsActivity extends Activity {
                 dp, hPad, vPad);
         root.addView(divider(dp), matchWidth());
 
+        buildToggleRow(root, "Allow on the lockscreen",
+                "Allow the gesture while the device is locked",
+                Prefs.KEY_LOCKSCREEN_ENABLED, Prefs.DEFAULT_LOCKSCREEN_ENABLED,
+                dp, hPad, vPad);
+        root.addView(divider(dp), matchWidth());
+
         // ── How to use ────────────────────────────────────────────────────────
         LinearLayout hint = new LinearLayout(this);
         hint.setOrientation(LinearLayout.VERTICAL);
@@ -124,7 +130,7 @@ public class SettingsActivity extends Activity {
                 "• Swipe left to decrease brightness",
                 "• Relative adjustment starts from the current level",
                 "• Works with notification shade open or closed",
-                "• Works on the lockscreen",
+                "• Works on the lockscreen, unless turned off above",
                 "• The % indicator matches the system brightness display",
                 "• Indicator colour follows your wallpaper accent"}) {
             TextView t = new TextView(this);
@@ -205,6 +211,10 @@ public class SettingsActivity extends Activity {
         intent.putExtra(Prefs.KEY_RELATIVE_MODE,
                 Settings.Secure.getInt(getContentResolver(),
                         Prefs.KEY_RELATIVE_MODE, Prefs.DEFAULT_RELATIVE_MODE) == 1);
+        intent.putExtra(Prefs.KEY_LOCKSCREEN_ENABLED,
+                Settings.Secure.getInt(getContentResolver(),
+                        Prefs.KEY_LOCKSCREEN_ENABLED,
+                        Prefs.DEFAULT_LOCKSCREEN_ENABLED) == 1);
         sendBroadcast(intent);
     }
 

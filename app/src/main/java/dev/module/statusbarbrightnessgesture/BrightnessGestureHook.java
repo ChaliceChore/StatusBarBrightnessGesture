@@ -1,5 +1,6 @@
 package dev.module.statusbarbrightnessgesture;
 
+import android.app.KeyguardManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -106,6 +107,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     // ── Cached resources ──────────────────────────────────────────────────────
 
     private DisplayManager mDisplayManager;
+    private KeyguardManager mKeyguardManager;
     private WindowManager mWindowManager;
     private int mScreenWidth;
     private int mScreenHeight;
@@ -139,6 +141,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private volatile boolean mGestureEnabled = true;
     private volatile boolean mOverlayEnabled  = true;
     private volatile boolean mRelativeMode    = false;
+    private volatile boolean mLockscreenEnabled = true;
 
     /**
      * Where the gesture's travel is anchored in relative mode: the position on
@@ -230,13 +233,18 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                     Prefs.KEY_OVERLAY_ENABLED, Prefs.DEFAULT_OVERLAY_ENABLED) == 1;
             mRelativeMode = Settings.Secure.getInt(context.getContentResolver(),
                     Prefs.KEY_RELATIVE_MODE, Prefs.DEFAULT_RELATIVE_MODE) == 1;
+            mLockscreenEnabled = Settings.Secure.getInt(context.getContentResolver(),
+                    Prefs.KEY_LOCKSCREEN_ENABLED,
+                    Prefs.DEFAULT_LOCKSCREEN_ENABLED) == 1;
             XposedBridge.log(TAG + ": boot state from Settings.Secure — gesture="
                     + mGestureEnabled + " overlay=" + mOverlayEnabled
-                    + " relative=" + mRelativeMode);
+                    + " relative=" + mRelativeMode
+                    + " lockscreen=" + mLockscreenEnabled);
         } catch (Throwable t) {
             mGestureEnabled = true;
             mOverlayEnabled  = true;
             mRelativeMode    = Prefs.DEFAULT_RELATIVE_MODE == 1;
+            mLockscreenEnabled = Prefs.DEFAULT_LOCKSCREEN_ENABLED == 1;
             XposedBridge.log(TAG + ": Settings.Secure read failed, defaulting to true: " + t);
         }
 
@@ -250,9 +258,13 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 mOverlayEnabled  = intent.getBooleanExtra(Prefs.KEY_OVERLAY_ENABLED,  true);
                 mRelativeMode    = intent.getBooleanExtra(Prefs.KEY_RELATIVE_MODE,
                         Prefs.DEFAULT_RELATIVE_MODE == 1);
+                mLockscreenEnabled = intent.getBooleanExtra(
+                        Prefs.KEY_LOCKSCREEN_ENABLED,
+                        Prefs.DEFAULT_LOCKSCREEN_ENABLED == 1);
                 XposedBridge.log(TAG + ": prefs updated via broadcast — gesture="
                         + mGestureEnabled + " overlay=" + mOverlayEnabled
-                        + " relative=" + mRelativeMode);
+                        + " relative=" + mRelativeMode
+                        + " lockscreen=" + mLockscreenEnabled);
                 if (prevGesture && !mGestureEnabled && mIndicatorAttached) {
                     hideIndicator();
                 }
@@ -414,6 +426,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             if (mMainHandler == null) mMainHandler = new Handler(Looper.getMainLooper());
             mDisplayManager = (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
             mWindowManager  = (WindowManager)  context.getSystemService(Context.WINDOW_SERVICE);
+            mKeyguardManager = (KeyguardManager)
+                    context.getSystemService(Context.KEYGUARD_SERVICE);
 
             android.graphics.Rect bounds = mWindowManager.getCurrentWindowMetrics().getBounds();
             mScreenWidth  = bounds.width();
@@ -631,6 +645,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
         releaseGesture();
 
+        // Checked per gesture rather than cached, since the lockscreen comes
+        // and goes while SystemUI keeps running.
+        if (!mLockscreenEnabled && isKeyguardShowing()) return TOUCH_PASS;
+
         boolean inRegion = source == TOUCH_SOURCE_STATUS_BAR
                 || (ev.getY() <= mScreenHeight * STATUS_BAR_Y_FRACTION);
         if (!inRegion) return TOUCH_PASS;
@@ -693,6 +711,15 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             mMainHandler.postDelayed(mDismissIndicator, INDICATOR_DISMISS_DELAY_MS);
         releaseGesture();
         return TOUCH_CONSUME;
+    }
+
+    private boolean isKeyguardShowing() {
+        try {
+            return mKeyguardManager != null && mKeyguardManager.isKeyguardLocked();
+        } catch (Throwable t) {
+            // Cannot tell — treat as unlocked rather than killing the gesture.
+            return false;
+        }
     }
 
     /** Clears all per-gesture state, including hook ownership. */

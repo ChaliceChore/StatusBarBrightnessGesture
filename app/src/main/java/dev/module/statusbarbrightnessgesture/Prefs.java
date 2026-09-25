@@ -18,6 +18,12 @@ public final class Prefs {
      * the finger. Off by default, which keeps the original behaviour.
      */
     public static final String KEY_RELATIVE_MODE     = "sbbrightness_relative_mode";
+    /**
+     * Whether the gesture works while the lockscreen is showing. On by
+     * default, which keeps the original behaviour.
+     */
+    public static final String KEY_LOCKSCREEN_ENABLED =
+            "sbbrightness_lockscreen_enabled";
 
     /** Broadcast for live updates — supplements Settings.Secure persistence */
     public static final String ACTION_PREFS_CHANGED  =
@@ -26,6 +32,7 @@ public final class Prefs {
     public static final int DEFAULT_GESTURE_ENABLED = 1;
     public static final int DEFAULT_OVERLAY_ENABLED  = 1;
     public static final int DEFAULT_RELATIVE_MODE    = 0;
+    public static final int DEFAULT_LOCKSCREEN_ENABLED = 1;
 
     private Prefs() {}
 }
