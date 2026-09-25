@@ -99,6 +99,13 @@ public class SettingsActivity extends Activity {
                 dp, hPad, vPad);
         root.addView(divider(dp), matchWidth());
 
+        buildToggleRow(root, "Use relative adjustment",
+                "Nudge brightness from its current level instead of jumping "
+                        + "to where you touch",
+                Prefs.KEY_RELATIVE_MODE, Prefs.DEFAULT_RELATIVE_MODE,
+                dp, hPad, vPad);
+        root.addView(divider(dp), matchWidth());
+
         // ── How to use ────────────────────────────────────────────────────────
         LinearLayout hint = new LinearLayout(this);
         hint.setOrientation(LinearLayout.VERTICAL);
@@ -115,6 +122,7 @@ public class SettingsActivity extends Activity {
         for (String tip : new String[]{
                 "• Swipe right on the status bar to increase brightness",
                 "• Swipe left to decrease brightness",
+                "• Relative adjustment starts from the current level",
                 "• Works with notification shade open or closed",
                 "• Works on the lockscreen",
                 "• The % indicator matches the system brightness display",
@@ -194,6 +202,9 @@ public class SettingsActivity extends Activity {
         intent.putExtra(Prefs.KEY_OVERLAY_ENABLED,
                 Settings.Secure.getInt(getContentResolver(),
                         Prefs.KEY_OVERLAY_ENABLED, Prefs.DEFAULT_OVERLAY_ENABLED) == 1);
+        intent.putExtra(Prefs.KEY_RELATIVE_MODE,
+                Settings.Secure.getInt(getContentResolver(),
+                        Prefs.KEY_RELATIVE_MODE, Prefs.DEFAULT_RELATIVE_MODE) == 1);
         sendBroadcast(intent);
     }
 

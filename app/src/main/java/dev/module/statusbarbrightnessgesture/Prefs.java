@@ -12,6 +12,12 @@ public final class Prefs {
      */
     public static final String KEY_GESTURE_ENABLED  = "sbbrightness_gesture_enabled";
     public static final String KEY_OVERLAY_ENABLED   = "sbbrightness_overlay_enabled";
+    /**
+     * Relative adjustment: a swipe nudges brightness up or down from the level
+     * already on screen, rather than setting it from the absolute position of
+     * the finger. Off by default, which keeps the original behaviour.
+     */
+    public static final String KEY_RELATIVE_MODE     = "sbbrightness_relative_mode";
 
     /** Broadcast for live updates — supplements Settings.Secure persistence */
     public static final String ACTION_PREFS_CHANGED  =
@@ -19,6 +25,7 @@ public final class Prefs {
 
     public static final int DEFAULT_GESTURE_ENABLED = 1;
     public static final int DEFAULT_OVERLAY_ENABLED  = 1;
+    public static final int DEFAULT_RELATIVE_MODE    = 0;
 
     private Prefs() {}
 }

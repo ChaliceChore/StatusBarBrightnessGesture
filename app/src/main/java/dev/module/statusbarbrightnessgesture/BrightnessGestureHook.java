@@ -138,6 +138,15 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private boolean mReceiverRegistered = false;
     private volatile boolean mGestureEnabled = true;
     private volatile boolean mOverlayEnabled  = true;
+    private volatile boolean mRelativeMode    = false;
+
+    /**
+     * Where the gesture's travel is anchored in relative mode: the position on
+     * the 0..1 curve that was showing when the gesture was recognised, and the
+     * x it was recognised at. Unused in absolute mode.
+     */
+    private float mGestureStartFraction;
+    private float mRelativeAnchorX;
 
     // ── Entry point ───────────────────────────────────────────────────────────
 
@@ -219,11 +228,15 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                     Prefs.KEY_GESTURE_ENABLED, Prefs.DEFAULT_GESTURE_ENABLED) == 1;
             mOverlayEnabled = Settings.Secure.getInt(context.getContentResolver(),
                     Prefs.KEY_OVERLAY_ENABLED, Prefs.DEFAULT_OVERLAY_ENABLED) == 1;
+            mRelativeMode = Settings.Secure.getInt(context.getContentResolver(),
+                    Prefs.KEY_RELATIVE_MODE, Prefs.DEFAULT_RELATIVE_MODE) == 1;
             XposedBridge.log(TAG + ": boot state from Settings.Secure — gesture="
-                    + mGestureEnabled + " overlay=" + mOverlayEnabled);
+                    + mGestureEnabled + " overlay=" + mOverlayEnabled
+                    + " relative=" + mRelativeMode);
         } catch (Throwable t) {
             mGestureEnabled = true;
             mOverlayEnabled  = true;
+            mRelativeMode    = Prefs.DEFAULT_RELATIVE_MODE == 1;
             XposedBridge.log(TAG + ": Settings.Secure read failed, defaulting to true: " + t);
         }
 
@@ -235,8 +248,11 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 boolean prevGesture = mGestureEnabled;
                 mGestureEnabled = intent.getBooleanExtra(Prefs.KEY_GESTURE_ENABLED, true);
                 mOverlayEnabled  = intent.getBooleanExtra(Prefs.KEY_OVERLAY_ENABLED,  true);
+                mRelativeMode    = intent.getBooleanExtra(Prefs.KEY_RELATIVE_MODE,
+                        Prefs.DEFAULT_RELATIVE_MODE == 1);
                 XposedBridge.log(TAG + ": prefs updated via broadcast — gesture="
-                        + mGestureEnabled + " overlay=" + mOverlayEnabled);
+                        + mGestureEnabled + " overlay=" + mOverlayEnabled
+                        + " relative=" + mRelativeMode);
                 if (prevGesture && !mGestureEnabled && mIndicatorAttached) {
                     hideIndicator();
                 }
@@ -563,6 +579,19 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 Math.round((float) Math.pow(n, 1.0 / GAMMA) * 100f)));
     }
 
+    /**
+      * Inverse of the curve computeBrightness() applies: the position on the
+      * gesture's 0..1 travel that currently shows this brightness. Used to
+      * anchor relative mode at the level already on screen.
+      */
+    private float brightnessToFraction(float brightness) {
+        float range = mBrightnessMax - mBrightnessMin;
+        if (range <= 0) return 0f;
+        float normalised = Math.max(0f, Math.min(1f,
+                (brightness - mBrightnessMin) / range));
+        return (float) Math.pow(normalised, 1.0 / GAMMA);
+    }
+
     private void hideIndicator() {
         if (mIndicatorView == null || mMainHandler == null) return;
         mMainHandler.removeCallbacks(mDismissIndicator);
@@ -627,6 +656,13 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             }
             mGestureActive = true;
             justActivated = true;
+            if (mRelativeMode) {
+                // Anchor the travel where the gesture was recognised, not at
+                // the down, so the first value applied is the brightness
+                // already on screen rather than a jump of one touch slop.
+                mGestureStartFraction = brightnessToFraction(getCurrentBrightness());
+                mRelativeAnchorX = ev.getX();
+            }
         }
         float brightness = computeBrightness(ev.getX());
         setTemporaryBrightness(brightness);
@@ -665,13 +701,23 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         mTouchStartedInStatusBar = false;
         mGestureOwner = TOUCH_SOURCE_NONE;
         mOwnedDownTime = -1;
+        mGestureStartFraction = 0f;
+        mRelativeAnchorX = 0f;
     }
 
     // ── Brightness computation ────────────────────────────────────────────────
 
     private float computeBrightness(float fingerX) {
         if (mBrightnessMin < 0) readBrightnessRange();
-        float fraction = Math.max(0f, Math.min(1f, fingerX / mScreenWidth));
+        // Absolute: the finger's position on the bar *is* the brightness.
+        // Relative: how far the finger has travelled since the gesture was
+        // recognised is added to the brightness that was already showing. Both
+        // share the same curve, so a full-width swipe covers the full range
+        // either way.
+        float fraction = mRelativeMode
+                ? mGestureStartFraction + (fingerX - mRelativeAnchorX) / mScreenWidth
+                : fingerX / mScreenWidth;
+        fraction = Math.max(0f, Math.min(1f, fraction));
         float gammaCorrected = (float) Math.pow(fraction, GAMMA);
         return Math.max(mBrightnessMin,
                 Math.min(mBrightnessMax,
