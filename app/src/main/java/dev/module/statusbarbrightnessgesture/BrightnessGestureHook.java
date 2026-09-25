@@ -14,10 +14,13 @@ import android.os.Looper;
 import android.view.Display;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.ViewParent;
 import android.view.WindowManager;
 import android.widget.TextView;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.Executors;
@@ -53,6 +56,13 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             "com.android.systemui.shade.NotificationShadeWindowView";
     private static final String BRIGHTNESS_UTILS_CLASS =
             "com.android.settingslib.display.BrightnessUtils";
+    /**
+     * Root of a Compose hierarchy. From Android 17 the status bar window is
+     * Compose, with the legacy PhoneStatusBarView embedded in it through
+     * PointerInteropFilter; see hookComposeRoot() for why that matters.
+     */
+    private static final String COMPOSE_ROOT_CLASS =
+            "androidx.compose.ui.platform.AndroidComposeView";
 
     private static final int GAMMA_SPACE_MAX = 65535;
     private static final float STATUS_BAR_Y_FRACTION = 0.06f;
@@ -64,6 +74,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private static final int TOUCH_SOURCE_NONE       = 0;
     private static final int TOUCH_SOURCE_STATUS_BAR = 1;
     private static final int TOUCH_SOURCE_SHADE      = 2;
+    private static final int TOUCH_SOURCE_COMPOSE    = 3;
 
     /** What the caller should do with an event after handleTouchEvent(). */
     private static final int TOUCH_PASS              = 0;
@@ -76,6 +87,13 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private float mDownY;
     private boolean mGestureActive = false;
     private boolean mTouchStartedInStatusBar = false;
+
+    /**
+     * The Compose root of the status bar window, resolved by walking up from
+     * PhoneStatusBarView once it is attached. Weak so a torn-down status bar
+     * (SystemUI rebuilds it on a theme or density change) can be collected.
+     */
+    private WeakReference<View> mStatusBarComposeRoot;
 
     /** Hook that owns the gesture in progress, or TOUCH_SOURCE_NONE. */
     private int mGestureOwner = TOUCH_SOURCE_NONE;
@@ -141,6 +159,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 lpparam.classLoader, hookMethodFn, false);
         hookAttachedToWindow(PHONE_STATUS_BAR_VIEW,
                 lpparam.classLoader, hookMethodFn);
+        hookComposeRoot(lpparam.classLoader, hookMethodFn);
     }
 
     // ── Runtime reflection to find LSPosed's real hookMethod ──────────────────
@@ -174,6 +193,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                         if (ctx == null) return;
                         if (!mReceiverRegistered) registerPrefsReceiver(ctx);
                         if (mDisplayManager == null) initDisplayResources(ctx);
+                        cacheComposeRoot(param.thisObject);
                     } catch (Throwable t) {
                         XposedBridge.log(TAG + ": onAttachedToWindow init failed: " + t);
                     }
@@ -241,42 +261,12 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             hookMethodFn.invoke(null, target, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
-                    MotionEvent ev = (MotionEvent) param.args[0];
-                    if (ev == null) return;
-                    if (mDisplayManager == null) {
-                        try {
-                            Context ctx = (Context) param.thisObject.getClass()
-                                    .getMethod("getContext").invoke(param.thisObject);
-                            if (ctx != null) initDisplayResources(ctx);
-                        } catch (Throwable t) {
-                            XposedBridge.log(TAG + ": display init failed: " + t);
-                        }
-                    }
-                    if (!mGestureEnabled) return;
-
-                    switch (handleTouchEvent(ev, source)) {
-                        case TOUCH_CONSUME:
-                            param.setResult(true);
-                            break;
-                        case TOUCH_CANCEL_UNDERLYING:
-                            // Let the original method run, but hand it a cancel
-                            // in place of this move — see onMove() for why.
-                            MotionEvent cancel = MotionEvent.obtain(ev);
-                            cancel.setAction(MotionEvent.ACTION_CANCEL);
-                            mPendingCancel = cancel;
-                            param.args[0] = cancel;
-                            break;
-                        default:
-                            break;
-                    }
+                    routeTouch(param, source);
                 }
 
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
-                    if (mPendingCancel != null) {
-                        mPendingCancel.recycle();
-                        mPendingCancel = null;
-                    }
+                    recyclePendingCancel();
                 }
             });
             XposedBridge.log(TAG + ": hooked " + className + "." + methodName);
@@ -286,6 +276,118 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": method not found: " + methodName);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hook failed for " + className + ": " + t);
+        }
+    }
+
+    /**
+     * From Android 17 the status bar window is a Compose hierarchy with the
+     * legacy PhoneStatusBarView embedded through PointerInteropFilter. That
+     * filter only keeps feeding a wrapped View while the View consumes what it
+     * is given. This module deliberately does not consume the down or the early
+     * moves, so that taps and shade pull-downs keep working, so the filter
+     * calls stopDispatching() and synthesises ACTION_CANCEL into
+     * PhoneStatusBarView right after the first move. The gesture never gets far
+     * enough to cross the activation slop, so nothing happens at all.
+     *
+     * The window's Compose root, by contrast, sees the whole gesture. Hooking
+     * its dispatchTouchEvent() puts this module above the interop filter, where
+     * consuming an event stops Compose from processing it and passing one on
+     * leaves Compose's own gestures — the pull-down among them — untouched.
+     * That is the same contract the legacy hooks rely on, so the routing in
+     * handleTouchEvent() is unchanged.
+     *
+     * Android 16 and earlier have no Compose status bar: the class is absent,
+     * no root is ever cached, and the legacy hooks keep doing the work.
+     */
+    private void hookComposeRoot(ClassLoader classLoader, Method hookMethodFn) {
+        try {
+            Class<?> cls = Class.forName(COMPOSE_ROOT_CLASS, false, classLoader);
+            Method target = cls.getDeclaredMethod(
+                    "dispatchTouchEvent", MotionEvent.class);
+            hookMethodFn.invoke(null, target, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    if (!isStatusBarComposeRoot(param.thisObject)) return;
+                    routeTouch(param, TOUCH_SOURCE_COMPOSE);
+                }
+
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    recyclePendingCancel();
+                }
+            });
+            XposedBridge.log(TAG + ": hooked " + COMPOSE_ROOT_CLASS
+                    + ".dispatchTouchEvent");
+        } catch (ClassNotFoundException e) {
+            XposedBridge.log(TAG + ": no Compose status bar — legacy hooks only");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": failed to hook Compose root: " + t);
+        }
+    }
+
+    /**
+     * Walks up from the attached PhoneStatusBarView to the Compose root hosting
+     * it, so the dispatch hook can tell the status bar window apart from every
+     * other Compose window in SystemUI.
+     */
+    private void cacheComposeRoot(Object statusBarView) {
+        try {
+            if (!(statusBarView instanceof View)) return;
+            for (ViewParent parent = ((View) statusBarView).getParent();
+                    parent != null; parent = parent.getParent()) {
+                if (COMPOSE_ROOT_CLASS.equals(parent.getClass().getName())) {
+                    mStatusBarComposeRoot = new WeakReference<>((View) parent);
+                    XposedBridge.log(TAG + ": Compose status bar root cached");
+                    return;
+                }
+            }
+            mStatusBarComposeRoot = null;
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": cacheComposeRoot failed: " + t);
+        }
+    }
+
+    private boolean isStatusBarComposeRoot(Object view) {
+        return mStatusBarComposeRoot != null && mStatusBarComposeRoot.get() == view;
+    }
+
+    // ── Shared routing for every touch hook ──────────────────────────────────
+
+    private void routeTouch(XC_MethodHook.MethodHookParam param, int source) {
+        MotionEvent ev = (MotionEvent) param.args[0];
+        if (ev == null) return;
+        if (mDisplayManager == null) {
+            try {
+                Context ctx = (Context) param.thisObject.getClass()
+                        .getMethod("getContext").invoke(param.thisObject);
+                if (ctx != null) initDisplayResources(ctx);
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": display init failed: " + t);
+            }
+        }
+        if (!mGestureEnabled) return;
+
+        switch (handleTouchEvent(ev, source)) {
+            case TOUCH_CONSUME:
+                param.setResult(true);
+                break;
+            case TOUCH_CANCEL_UNDERLYING:
+                // Let the original method run, but hand it a cancel in place
+                // of this move — see onMove() for why.
+                MotionEvent cancel = MotionEvent.obtain(ev);
+                cancel.setAction(MotionEvent.ACTION_CANCEL);
+                mPendingCancel = cancel;
+                param.args[0] = cancel;
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void recyclePendingCancel() {
+        if (mPendingCancel != null) {
+            mPendingCancel.recycle();
+            mPendingCancel = null;
         }
     }
 
